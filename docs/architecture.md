@@ -47,6 +47,8 @@ The example keeps Mammoth's WASD, Shift sprint, C crouch toggle, Space jump, Alt
 
 `src/fp-look.ts` copies Mammoth's pure production look calculations. Native pointer-lock deltas update camera rotation immediately, with the same .0022 radians-per-pixel sensitivity, 1.53-radian pitch limit, light post-flick coast and Alt recenter. Horizontal turning is unlimited and drives the same heading submitted for movement. Alt alone temporarily separates head yaw from body yaw. There is no third-person orbit or viewport-limited substitute. Capture failure remains paused. Escape, focus loss, and a hidden document clear transient movement and submit neutral input. A delayed capture request cannot resume paused play. Click and E refresh the center ray and respect opaque surfaces; decorative geometry is only tested for occlusion when interacting.
 
+There is no welcome or pause modal. Losing focus releases the mouse while preserving the first-person camera and unobstructed scene. A click in the canvas reacquires native capture; a small controls hint explains this when unlocked. Connection/capture errors, browser links and the two-seat retry action stay in the corner HUD.
+
 ## Anonymous players and reconnects
 
 There is no account signup or login. The SDK obtains an anonymous connection identity and token. The client stores the token in `sessionStorage`, so a normal reload of that tab reconnects with its existing identity. Independently opened tabs use separate guest sessions. If a duplicated tab inherits the first guest token, the server rejects that simultaneous seat claim and the second client reconnects with a new anonymous identity.

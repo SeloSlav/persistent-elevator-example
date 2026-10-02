@@ -15,15 +15,14 @@ import {
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <div class="hud">
     <div class="brand"><div class="eyebrow">A shared world / 001</div><h1>Persistent Elevator</h1><p>Ground + 20 floors. Two players. One elevator.</p></div>
-    <div class="status"><div class="status-line"><span class="dot"></span><span id="connection">Connecting…</span></div><span class="backend" id="backend">Initializing renderer</span></div>
+    <div class="status"><div class="status-line"><span class="dot"></span><span id="connection">Connecting…</span></div><span class="backend" id="backend">Initializing renderer</span><button id="join" hidden>Retry joining</button><div class="error" id="error"></div><div id="browser-help" hidden><a id="open-browser">Open in Edge ↗</a><button id="copy-url">Copy game URL</button></div></div>
     <div class="crosshair"></div><div class="prompt" id="prompt"></div>
     <div class="bottom"><div class="telemetry"><div class="floor-line"><span class="floor-number" id="floor">01</span><span class="travel-direction" id="direction"></span><div class="floor-state" id="phase">Doors open<br>Floor 1</div></div><div class="queue" id="queue">No stops queued</div></div>
-    <div class="controls"><div><kbd>W A S D</kbd> move <kbd>Shift</kbd> sprint <kbd>Space</kbd> jump</div><div><kbd>C</kbd> crouch <kbd>Alt</kbd> free look <kbd>R</kbd> respawn</div><div><kbd>Click / E</kbd> interact <kbd>Mouse</kbd> look <kbd>Esc</kbd> pause</div></div></div>
+    <div class="controls"><div><kbd>W A S D</kbd> move <kbd>Shift</kbd> sprint <kbd>Space</kbd> jump</div><div><kbd>C</kbd> crouch <kbd>Alt</kbd> free look <kbd>R</kbd> respawn</div><div><kbd>Click / E</kbd> interact <kbd>Mouse</kbd> look <kbd>Esc</kbd> pause</div><div id="note"></div></div></div>
     <div class="debug" id="debug"></div>
-    <div class="overlay" id="overlay"><div class="card"><div class="eyebrow">Persistent multiplayer example</div><h2>Going<br>somewhere?</h2><p>Share a ride, pick any floor, and step out into the sky. Open a second tab to bring another player along.</p><button id="play" disabled>Connecting…</button><div class="note" id="note">Enter to capture the mouse · Click or E to interact<br>Anonymous guests. No account or sign-in.</div><div class="error" id="error"></div><div id="browser-help" hidden><a id="open-browser">Open in Edge ↗</a><button id="copy-url">Copy game URL</button></div></div></div>
   </div>`;
 
-const ui = Object.fromEntries(['connection','backend','prompt','floor','direction','phase','queue','debug','overlay','play','note','error','browser-help'].map(id => [id, document.getElementById(id)!]));
+const ui = Object.fromEntries(['connection','backend','prompt','floor','direction','phase','queue','debug','join','note','error','browser-help'].map(id => [id, document.getElementById(id)!]));
 const params = new URLSearchParams(location.search);
 const debugMode = params.get('debug') === '1';
 const scene = new THREE.Scene();
@@ -145,7 +144,7 @@ function captureMouse() {
   window.focus();
   capture.request();
 }
-ui.play.addEventListener('click', captureMouse);
+ui.join.addEventListener('click', () => network.join());
 renderer.domElement.addEventListener('click', () => {
   if (!locked()) captureMouse();
 });
@@ -215,13 +214,10 @@ function updateHud() {
   const destination = displayElevator.targetFloor === 0 ? 'ground' : `floor ${displayElevator.targetFloor}`;
   ui.phase.innerHTML = `${displayElevator.phase === 'moving' ? `To ${destination}` : displayElevator.phase === 'idle' ? indication.floor === 0 ? 'Ground plaza' : 'At landing' : `${displayElevator.phase} doors`}<br>${Math.round(displayElevator.y-GROUND_Y)} m above ground`;
   ui.queue.textContent = displayElevator.queue.length ? `Next stops: ${displayElevator.queue.map(floorLabel).join(' → ')}` : 'No stops queued';
-  ui.overlay.classList.toggle('hidden', locked() || params.get('inspect') === '1');
-  const button = ui.play as HTMLButtonElement;
-  button.disabled = !network.ready || capture.pending;
-  button.textContent = capture.pending ? 'Capturing mouse…' : !network.ready ? 'Connecting…' : !row?.online ? 'Try joining — 2 player limit' : entered ? 'Resume ride →' : `Enter as player ${row.slot + 1} →`;
+  ui.join.hidden = !network.ready || !!row?.online || params.get('inspect') === '1';
   ui.error.textContent = capture.error || network.error;
   ui['browser-help'].hidden = !capture.error;
-  ui.note.textContent = network.ready ? row?.online ? 'The mouse stays captured for continuous look. Aim and click or press E. Escape pauses. Open a second tab for player two.' : 'Both player slots are occupied. You can join when someone leaves.' : 'Start the database with npm run db:start, then npm run db:publish. The client reconnects automatically.';
+  ui.note.textContent = params.get('inspect') === '1' || locked() ? '' : capture.pending ? 'Capturing mouse…' : row?.online ? 'Click in the game to control the mouse' : '';
   if (debugMode) ui.debug.textContent = `CPU frame: ${frameMs.toFixed(1)} ms\nDraw calls: ${renderStats.drawCalls}\nTriangles: ${renderStats.triangles}\nCab y: ${displayElevator.y.toFixed(3)}\nPlayer y: ${local?.y.toFixed(3) ?? '—'}\nCamera / cab: ${(camera.position.y-displayElevator.y).toFixed(6)} m\nFeet / cab: ${local ? (displayed.y-displayElevator.y).toFixed(6) : '—'} m\nGPU timing: not measured\nNo postprocessing / fixed scene`;
 }
 

@@ -31,18 +31,13 @@ button { font: inherit; cursor: pointer; color: inherit; }
 .queue { color: #8faaa4; font-size: 11px; margin-top: 10px; }
 .controls { color: #d2d6cb; text-align: right; font-size: 11px; line-height: 2.2; text-shadow: 0 1px 8px #000a; }
 kbd { font: 500 10px 'Space Grotesk', sans-serif; padding: 3px 5px; border: 1px solid #ffffff35; border-radius: 3px; color: #ffe7b5; margin: 0 3px; }
-.overlay { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: auto; background: linear-gradient(90deg,#101d22aa,#101d221a 80%); }
-.overlay.hidden { display: none; }
-.card { margin: 0 24px; width: min(440px,90vw); padding: 32px; border: 1px solid #ffffff25; background: #142028f2; box-shadow: 0 24px 80px #0003; border-radius: 6px; }
-.card h2 { font: 500 38px 'Space Grotesk', sans-serif; line-height: 1.08; letter-spacing: -.05em; margin: 16px 0; }
-.card p { font-size: 14px; line-height: 1.7; color: #bac6c1; margin: 16px 0 24px; }
-.card button { background: #e6b669; border: 0; color: #17232b; padding: 13px 20px; border-radius: 3px; font-weight: 700; width: 100%; }
-.card button:disabled { cursor: wait; opacity: .5; }
-.note { font-size: 11px; color: #8ca29d; line-height: 1.7; margin-top: 17px; }
-.error { color: #f2be9e; font-size: 12px; overflow-wrap: anywhere; line-height: 1.5; margin-top: 16px; }
-#browser-help { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 16px; }
-#browser-help[hidden], #open-browser[hidden] { display: none; }
+#note { font-size: 11px; color: #e6b669; }
+#note:empty, .error:empty { display: none; }
+.error { max-width: 270px; color: #f2be9e; font-size: 11px; overflow-wrap: anywhere; line-height: 1.5; text-align: right; }
+#browser-help { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; pointer-events: auto; }
+#browser-help[hidden], #open-browser[hidden], #join[hidden] { display: none; }
+#join { pointer-events: auto; background: #172126d9; border: 1px solid #ffffff35; border-radius: 3px; padding: 8px 12px; font-size: 12px; }
 #open-browser { color: #17232b; background: #e6b669; padding: 10px 14px; border-radius: 3px; font-size: 12px; font-weight: 700; text-decoration: none; }
-.card #copy-url { width: auto; background: transparent; padding: 10px; color: #e6b669; border: 1px solid #e6b66966; font-size: 12px; }
+#copy-url { background: #172126d9; padding: 10px; color: #e6b669; border: 1px solid #e6b66966; border-radius: 3px; font-size: 12px; }
 .debug { position: absolute; left: 32px; top: 118px; font: 10px monospace; color: #cae3ce; white-space: pre; }
-@media(max-width:650px) { .brand { top: 20px; left:20px; } .brand h1 {font-size:20px;} .status { top:20px; right:20px; } .bottom {left:20px;right:20px;bottom:20px;} .controls {max-width:190px;} .card {padding:24px;} }
+@media(max-width:650px) { .brand { top: 20px; left:20px; } .brand h1 {font-size:20px;} .status { top:20px; right:20px; } .bottom {left:20px;right:20px;bottom:20px;} .controls {max-width:190px;} }
