@@ -35,7 +35,9 @@ The cab advances before player movement. A rider supported by the cab follows it
 
 The local client predicts movement from the same inputs it submits to the server and reconciles with authoritative snapshots. Remote capsules use replicated state for presentation. Elevator rendering evaluates its motion between updates; its floor, its doors, and its riders use the same evaluated cab height. Render frame rate does not determine shared elevator progress.
 
-The example keeps Mammoth's WASD, Shift sprint, C crouch toggle, Space jump, Alt free look, mouse look, click interaction, and E interaction controls. Speeds are 5 m/s walking, 7.5 m/s sprinting, and 2.8 m/s crouching. Gravity is 21.5 m/s², with a 5.7 m/s jump impulse. Pill bodies have a .22 m radius and standing/crouched heights of 1.78/1.2 m. Jumping inside the cab is allowed here as an intentional extension to Mammoth.
+The example keeps Mammoth's WASD, Shift sprint, C crouch toggle, Space jump, Alt free look, mouse look, and V camera controls. E operates the aimed floor, call, and door controls, and the nearby landing gate. Speeds are 5 m/s walking, 7.5 m/s sprinting, and 2.8 m/s crouching. Gravity is 21.5 m/s², with a 5.7 m/s jump impulse. Pill bodies have a .22 m radius and standing/crouched heights of 1.78/1.2 m. Jumping inside the cab is allowed here as an intentional extension to Mammoth.
+
+Mouse movement turns the camera without holding a button. Native pointer lock allows continuous rotation; the embedded-browser fallback follows movement within the viewport. Third-person orbit uses both pitch and yaw, constrained to the cab while inside it. Escape, focus loss, and a hidden document clear held movement and submit neutral input immediately. Interaction raycasts use the center reticle and respect opaque surfaces.
 
 ## Anonymous players and reconnects
 

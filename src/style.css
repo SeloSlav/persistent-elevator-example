@@ -4,13 +4,14 @@
 * { box-sizing: border-box; }
 body { margin: 0; overflow: hidden; }
 canvas { display: block; position: fixed; inset: 0; width: 100%; height: 100%; }
+canvas:focus { outline: none; }
 button { font: inherit; cursor: pointer; color: inherit; }
 .hud { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
-.hud::before { content: ""; position: absolute; inset: 0 0 auto; height: 160px; background: linear-gradient(#101d2299, transparent); }
-.brand { position: absolute; top: 30px; left: 32px; }
+.hud::before { content: ""; position: absolute; inset: 0 0 auto; height: 180px; background: linear-gradient(#101d22bb, transparent); }
+.brand { position: absolute; top: 30px; left: 32px; text-shadow: 0 1px 5px #0009; }
 .eyebrow { color: #dbac63; font: 500 11px 'Space Grotesk', sans-serif; letter-spacing: .2em; text-transform: uppercase; }
 .brand h1 { font: 500 25px 'Space Grotesk', sans-serif; letter-spacing: -.045em; margin: 8px 0; }
-.brand p { color: #b9c1be; margin: 0; font-size: 12px; }
+.brand p { color: #e0e5df; margin: 0; font-size: 12px; }
 .status { position: absolute; top: 30px; right: 32px; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .status-line { display: flex; align-items: center; gap: 9px; padding: 10px 14px; border: 1px solid #ffffff22; border-radius: 24px; background: #172126d9; font: 500 12px 'Space Grotesk',sans-serif; }
 .dot { width: 6px; height: 6px; border-radius: 50%; background: #bcbcb1; }
@@ -18,7 +19,9 @@ button { font: inherit; cursor: pointer; color: inherit; }
 .backend { color: #c4ccc8; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
 #pause { pointer-events: auto; background: #172126db; border: 1px solid #ffffff35; border-radius: 3px; padding: 7px 12px; font-size: 11px; }
 .crosshair { position: absolute; top: 50%; left: 50%; width: 5px; height: 5px; border-radius: 50%; background: #fffbe1; transform: translate(-50%,-50%); box-shadow: 0 0 0 3px #0002; }
-.prompt { position: absolute; top: calc(50% + 23px); left: 50%; transform: translateX(-50%); white-space: nowrap; font-size: 12px; color: #fff1d1; text-shadow: 0 1px 6px #000; }
+.crosshair.active { width: 10px; height: 10px; background: #f3c47d; box-shadow: 0 0 0 4px #17212677; }
+.prompt { position: absolute; top: calc(50% + 23px); left: 50%; transform: translateX(-50%); white-space: nowrap; font-size: 12px; color: #fff1d1; text-shadow: 0 1px 6px #000; background: #152329d9; padding: 8px 12px; border-radius: 3px; }
+.prompt:empty { display: none; }
 .bottom { position: absolute; bottom: 26px; left: 32px; right: 32px; display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
 .telemetry { padding: 16px 20px; background: #172126e6; border: 1px solid #ffffff20; border-radius: 4px; min-width: 190px; }
 .floor-line { display: flex; align-items: center; gap: 14px; }

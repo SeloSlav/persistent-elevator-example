@@ -2,7 +2,7 @@
 
 ![Two anonymous pill players sharing the elevator](docs/preview.jpg)
 
-A small multiplayer game demonstrating a server-authoritative elevator with **Vite, TypeScript, Three.js, and SpacetimeDB**. Two anonymous players share one elevator, its doors, and its destination queue. Both players can walk around the moving cab, click any of its 20 floor buttons, leave onto a landing, and jump off the platform.
+A small multiplayer game demonstrating a server-authoritative elevator with **Vite, TypeScript, Three.js, and SpacetimeDB**. Two anonymous players share one elevator, its doors, and its destination queue. Both players can walk around the moving cab, select any of its 20 floor buttons with E, leave onto a landing, and jump off the platform.
 
 Players are capsules. The movement controls and tuning come from the Mammoth game; this repository has no Mammoth runtime, asset, or authentication dependencies. Jumping inside the cab is an intentional extension to Mammoth's current controls.
 
@@ -40,7 +40,7 @@ The CLI wrapper also checks the usual Windows installation directory. If your CL
 ## Try two players
 
 1. Open the game in two browser tabs. Each tab connects as an anonymous guest, with its own token stored in `sessionStorage`. If **Duplicate tab** copies the first token, the client detects the occupied identity and obtains a separate guest token.
-2. Click **Enter** to capture the mouse. You start inside the cab; look at a numbered button on the back wall and click it. Embedded browsers that reject pointer lock use drag-to-look and cursor clicks instead.
+2. Click **Enter** to capture the mouse. Move the mouse to look, aim the center reticle at a numbered button on the back wall, and press **E**. A gold reticle and highlighted control show the current interaction target. Embedded browsers that reject pointer lock also follow mouse movement without dragging; their movement is limited by the viewport.
 3. Ride together, or leave one player on a platform and call the elevator from that landing. Both players see the same cab, queue, and gates.
 4. Open the landing gate with **E** when the cab is docked, then walk out. Jump off a platform to fall to the ground plaza, or press **R** to respawn.
 5. Reload a tab to reconnect with that tab's identity. Stop and restart the database using the same `.spacetime-data/` directory to inspect persistence.
@@ -57,11 +57,11 @@ The instance allows **two connected players**. A third guest remains in the lobb
 | Space | Jump; hold for the full jump height |
 | Mouse | Look |
 | Hold Alt + mouse | Free look while keeping movement heading |
-| Left click | Capture mouse; click a floor or landing call button |
-| E | Call elevator or toggle the nearby landing gate |
+| Left click | Capture or resume mouse-look |
+| E | Select the aimed floor/call/door button, or toggle the nearby landing gate |
 | V | Toggle third-person view |
 | R | Respawn |
-| Escape | Release mouse |
+| Escape | Pause movement and release mouse |
 
 The 20 floors are numbered **1–20**, spaced 4 meters apart. Floor 1 and the cab start at height 0. Each landing is a small platform in front of the shaft; the ground plaza is at height −4. The landing gates open only when the cab is docked, and close when it leaves. The interior doors close before travel and open at arrival.
 
