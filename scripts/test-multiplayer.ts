@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
 import { DbConnection } from '../src/module_bindings';
-import { floorY, idleInput, type ElevatorState, type InputState, type PlayerState } from '../shared/simulation';
+import { floorY, idleInput, landingIndex, GROUND_FLOOR, GROUND_Y, LANDING_COUNT,
+  type ElevatorState, type InputState, type PlayerState } from '../shared/simulation';
 
 const uri = process.env.SPACETIMEDB_URI ?? 'http://127.0.0.1:3001';
 const database = process.env.SPACETIMEDB_DATABASE ?? 'persistent-elevator-example';
 const started = performance.now();
-const deadline = started + 90_000;
+const deadline = started + 180_000;
 const clients: Guest[] = [];
 const checks: { name: string; elapsedMs: number }[] = [];
 
@@ -284,6 +285,43 @@ async function run() {
   await sleep(350);
   await replicated('Platform exit, jump, and reentry replicate to the other guest', a, b);
 
+  // Recover through the world after a real fall; never invoke respawn or submit a transform.
+  await input(a, { forward: 1, yaw: Math.PI });
+  await waitFor('walking to the floor 20 platform edge', () => player(a).z > 7.1 && player(a).grounded);
+  await input(a, { jumpHeld: true, jumpSeq: a.input.jumpSeq + 1 });
+  await waitFor('jumping beyond the floor 20 platform', () => player(a).z > 8.5 && !player(a).grounded);
+  await input(a, { forward: 0, jumpHeld: false });
+  await waitFor('landing on the ground plaza after the fall', () => !player(a).inCab && player(a).grounded && Math.abs(player(a).y - GROUND_Y) < 0.06, 8_000);
+  assert.equal(elevator(a).currentFloor, 20, 'Falling must not teleport or reset the cabin.');
+  record('Jumping off floor 20 lands on the G plaza without respawn');
+  await input(a, { forward: 1, yaw: 0 });
+  await waitFor('walking from the plaza to the ground call station', () => player(a).z < 3.4);
+  await input(a, { forward: 0 });
+  await sleep(250);
+  await rejected('Ground gate stays locked while the cabin is upstairs',
+    () => a.connection.reducers.toggleLandingDoor({ floor: GROUND_FLOOR }), /locked until/i);
+  await bounded('Hail G from the plaza', a.connection.reducers.hailFloor({ floor: GROUND_FLOOR }));
+  await waitFor('G is a queued or active real stop', () => {
+    const cab = elevator(b);
+    return cab.queue.includes(GROUND_FLOOR) || (cab.phase === 'moving' && cab.targetFloor === GROUND_FLOOR);
+  });
+  record('The fallen guest can hail G and replicate the floor-zero request');
+  await waitFor('cab arrives at G with the other guest aboard', () => elevator(a).currentFloor === GROUND_FLOOR && elevator(a).phase === 'idle', 35_000);
+  assert.equal(elevator(a).y, GROUND_Y);
+  assert(Math.abs(player(b).y - GROUND_Y) < 0.06 && player(b).inCab, 'The remaining rider lost support on the descent to G.');
+  assert.equal(elevator(a).landingDoors.length, LANDING_COUNT);
+  assert.equal(elevator(a).landingOpen.length, LANDING_COUNT);
+  const groundIndex = landingIndex(GROUND_FLOOR);
+  assert.equal(groundIndex, 20, 'G must append its gate without moving numbered-floor indexes.');
+  await bounded('Open docked G gate', a.connection.reducers.toggleLandingDoor({ floor: GROUND_FLOOR }));
+  await waitFor('G gate and cabin doors open', () => elevator(a).landingOpen[groundIndex]! >= 0.99 && elevator(a).door >= 0.99);
+  await input(a, { forward: 1, yaw: 0 });
+  await waitFor('the fallen guest boards from the G plaza', () => player(a).inCab && player(a).z < 0.9 && player(a).grounded);
+  await input(a, { forward: 0 });
+  await sleep(350);
+  assert(Math.abs(player(a).y - GROUND_Y) < 0.06);
+  await replicated('Ground fall, hail, arrival, and boarding replicate to both guests', a, b);
+
   const before = { ...player(a) };
   const token = a.token;
   close(a);
@@ -294,15 +332,15 @@ async function run() {
   assert.equal(player(resumed).slot, before.slot, 'Reconnect changed seat.');
   assert(Math.hypot(player(resumed).x - before.x, player(resumed).y - before.y, player(resumed).z - before.z) < 0.12,
     'Reconnect lost the stored player pose.');
-  assert.equal(elevator(resumed).currentFloor, 20, 'Reconnect reset the persistent elevator.');
+  assert.equal(elevator(resumed).currentFloor, GROUND_FLOOR, 'Reconnect reset the persistent elevator.');
   await replicated('Same guest token reconnects with its stored pose and slot', resumed, b);
 
   close(resumed);
   close(b);
   await waitFor('both player seats become offline', () => rows(lobby).every(row => !row.online));
-  assert.equal(elevator(lobby).currentFloor, 20);
+  assert.equal(elevator(lobby).currentFloor, GROUND_FLOOR);
   await join(lobby);
-  assert.equal(elevator(lobby).currentFloor, 20, 'A fresh guest reset the elevator.');
+  assert.equal(elevator(lobby).currentFloor, GROUND_FLOOR, 'A fresh guest reset the elevator.');
   assert.equal(rows(lobby).length, 2, 'Offline replacement grew the bounded player table.');
   record('Waiting third guest can retry without resetting the persistent world');
 }

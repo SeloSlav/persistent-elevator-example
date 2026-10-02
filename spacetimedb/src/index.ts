@@ -3,7 +3,7 @@ import { schema, table, t, SenderError, type Infer, type InferSchema, type Reduc
 import {
   initialElevator, initialPlayer, idleInput, insideCab, nearLanding,
   stepElevator, stepPlayer, requestFloor, toggleLandingDoor as toggleDoor,
-  doorwayOccupied, setDoor, TICK_DT, type InputState, type ElevatorState,
+  doorwayOccupied, setDoor, TICK_DT, validFloor, landingIndex, normalizeLandingState, type InputState, type ElevatorState,
 } from '../../shared/simulation';
 
 // Two public snapshots and one private timer are the entire database schema.
@@ -99,7 +99,8 @@ export const selectFloor = spacetimedb.reducer({ floor: t.u8() }, (ctx, { floor 
   const row = joinedPlayer(ctx);
   const cab = elevatorState(ctx);
   if (!insideCab(row, cab)) throw new SenderError('Select a floor from inside the cabin.');
-  if (!requestFloor(cab, floor) && (floor < 1 || floor > 20)) throw new SenderError('Choose a floor from 1 to 20.');
+  if (!validFloor(floor)) throw new SenderError('Choose G or a floor from 1 to 20.');
+  requestFloor(cab, floor);
   ctx.db.elevator.id.update(cab);
 });
 
@@ -146,7 +147,7 @@ export const simulate = spacetimedb.reducer({ onSchedule: tick }, { arg: tick.ro
   // Safety edge reopens both leaves until the capsule clears the threshold.
   if (cab.phase === 'closing' && rows.some(row => row.online && doorwayOccupied(row, cab))) {
     setDoor(cab, true);
-    cab.landingDoors[cab.currentFloor - 1] = true;
+    cab.landingDoors[landingIndex(cab.currentFloor)] = true;
   }
   stepElevator(cab, TICK_DT);
   cab.sampleMicros = now;
@@ -176,7 +177,7 @@ function elevatorState(ctx: Context): ElevatorState {
   const row = ctx.db.elevator.id.find(0)!;
   // The runtime decodes array<u8> as Uint8Array, despite the inferred number[]
   // type. Normalize at the database boundary before shared FIFO push/shift.
-  return { ...row, queue: Array.from(row.queue) };
+  return normalizeLandingState({ ...row, queue: Array.from(row.queue) });
 }
 
 function joinedPlayer(ctx: Context): PlayerRow {

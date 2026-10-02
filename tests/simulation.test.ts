@@ -4,6 +4,8 @@ import {
   initialElevator, initialPlayer, idleInput, stepElevator, stepPlayer,
   requestFloor, toggleLandingDoor, doorwayOccupied, floorY, TICK_DT,
   CAB_HEIGHT, PLAYER_HEIGHT, PLAYER_RADIUS, CAB_HALF,
+  GROUND_FLOOR, GROUND_Y, LANDING_COUNT, landingIndex, landingFloor,
+  floorAtY, floorLabel, normalizeLandingState, nearLanding,
   type ElevatorState, type PlayerState, type InputState,
 } from '../shared/simulation';
 
@@ -15,7 +17,7 @@ function tick(elevator: ElevatorState, players: PlayerState[], inputs?: InputSta
 
 test('all 20 floors are valid; requests are unique and served FIFO', () => {
   const elevator = initialElevator();
-  assert.equal(requestFloor(elevator, 0), false);
+  assert.equal(requestFloor(elevator, -1), false);
   assert.equal(requestFloor(elevator, 21), false);
   for (let floor = 2; floor <= 20; floor++) assert.equal(requestFloor(elevator, floor), true);
   assert.equal(requestFloor(elevator, 20), false);
@@ -155,4 +157,97 @@ test('released Space cuts the rise while held Space reaches a higher apex', () =
     releasedApex = Math.max(releasedApex, released.y);
   }
   assert.ok(heldApex > releasedApex + 0.25);
+});
+
+test('G preserves every numbered floor and appends its gate to legacy snapshots', () => {
+  const elevator = { ...initialElevator(), y: floorY(5), currentFloor: 5, targetFloor: 5,
+    queue: [9, 2], landingDoors: Array.from({ length: 20 }, (_, i) => i === 4),
+    landingOpen: Array.from({ length: 20 }, (_, i) => i === 4 ? 0.75 : 0) };
+  const before = structuredClone(elevator);
+  normalizeLandingState(elevator);
+  assert.equal(elevator.landingDoors.length, LANDING_COUNT);
+  assert.equal(elevator.landingOpen.length, LANDING_COUNT);
+  assert.deepEqual(elevator.landingDoors.slice(0, 20), before.landingDoors);
+  assert.deepEqual(elevator.landingOpen.slice(0, 20), before.landingOpen);
+  assert.equal(elevator.landingDoors[landingIndex(GROUND_FLOOR)], false);
+  assert.equal(elevator.landingOpen[landingIndex(GROUND_FLOOR)], 0);
+  assert.equal(elevator.y, before.y);
+  assert.equal(elevator.currentFloor, before.currentFloor);
+  assert.deepEqual(elevator.queue, before.queue);
+  assert.equal(floorY(GROUND_FLOOR), GROUND_Y);
+  assert.equal(floorAtY(GROUND_Y), GROUND_FLOOR);
+  assert.equal(floorLabel(GROUND_FLOOR), 'G');
+  for (let floor = 1; floor <= 20; floor++) {
+    assert.equal(floorY(floor), (floor - 1) * 4);
+    assert.equal(landingIndex(floor), floor - 1);
+    assert.equal(landingFloor(landingIndex(floor)), floor);
+  }
+  assert.equal(landingFloor(20), GROUND_FLOOR);
+});
+
+test('G is a real FIFO stop: floor zero is never discarded as a falsy queue entry', () => {
+  const elevator = initialElevator();
+  assert.equal(requestFloor(elevator, GROUND_FLOOR), true);
+  assert.equal(requestFloor(elevator, GROUND_FLOOR), false);
+  assert.equal(requestFloor(elevator, 2), true);
+  assert.deepEqual(elevator.queue, [GROUND_FLOOR, 2]);
+  const arrivals: number[] = [];
+  for (let i = 0; i < 600 && arrivals.length < 2; i++) {
+    const previous = elevator.currentFloor;
+    stepElevator(elevator, TICK_DT);
+    if (elevator.currentFloor !== previous) arrivals.push(elevator.currentFloor);
+  }
+  assert.deepEqual(arrivals, [GROUND_FLOOR, 2]);
+  assert.equal(elevator.y, floorY(2));
+});
+
+test('a fallen player can walk to G, hail the cabin, open its gate, board, and ride again', () => {
+  const elevator = { ...initialElevator(), y: floorY(5), currentFloor: 5, targetFloor: 5 };
+  const player = { ...initialPlayer(), y: floorY(5), z: 7.4, inCab: false };
+  const jumpOff = { ...idleInput(player), forward: 1, jumpHeld: true, jumpSeq: 1, seq: 1 };
+  for (let i = 0; i < 10; i++) tick(elevator, [player], [jumpOff]);
+  for (let i = 0; i < 100; i++) tick(elevator, [player]);
+  assert.equal(player.y, GROUND_Y);
+  assert.equal(player.inCab, false);
+  assert.equal(player.grounded, true);
+  const walkBack = { ...idleInput(player), forward: 1, yaw: 0 };
+  for (let i = 0; i < 60 && player.z > 3.5; i++) tick(elevator, [player], [walkBack]);
+  for (let i = 0; i < 10; i++) tick(elevator, [player]);
+  assert.ok(nearLanding(player, GROUND_FLOOR));
+  assert.equal(toggleLandingDoor(elevator, GROUND_FLOOR), false, 'G is locked before the cabin arrives');
+  assert.equal(requestFloor(elevator, GROUND_FLOOR), true);
+  for (let i = 0; i < 300 && !(elevator.currentFloor === GROUND_FLOOR && elevator.phase === 'idle'); i++) tick(elevator, [player]);
+  assert.equal(elevator.currentFloor, GROUND_FLOOR);
+  assert.equal(elevator.y, GROUND_Y);
+  assert.equal(player.y, GROUND_Y);
+  assert.equal(toggleLandingDoor(elevator, GROUND_FLOOR), true);
+  for (let i = 0; i < 8; i++) tick(elevator, [player]);
+  assert.equal(elevator.landingOpen[landingIndex(GROUND_FLOOR)], 1);
+  for (let i = 0; i < 30 && player.z > 0.75; i++) tick(elevator, [player], [walkBack]);
+  for (let i = 0; i < 10; i++) tick(elevator, [player]);
+  assert.equal(player.inCab, true);
+  assert.equal(player.grounded, true);
+  assert.equal(player.y, GROUND_Y);
+  assert.equal(requestFloor(elevator, 1), true);
+  for (let i = 0; i < 300 && !(Number(elevator.currentFloor) === 1 && elevator.phase === 'idle'); i++) tick(elevator, [player]);
+  assert.equal(elevator.currentFloor, 1);
+  assert.equal(player.inCab, true);
+  assert.equal(player.y, floorY(1));
+  assert.equal(elevator.landingDoors[landingIndex(GROUND_FLOOR)], false);
+  assert.equal(elevator.landingOpen[landingIndex(GROUND_FLOOR)], 0);
+});
+
+test('G gate safety and cabin exit use the appended gate rather than floor 20', () => {
+  const elevator = { ...initialElevator(), y: GROUND_Y, currentFloor: GROUND_FLOOR, targetFloor: GROUND_FLOOR };
+  const player = { ...initialPlayer(), x: 0, y: GROUND_Y, z: CAB_HALF };
+  assert.equal(doorwayOccupied(player, elevator), true);
+  assert.equal(toggleLandingDoor(elevator, GROUND_FLOOR), true);
+  assert.equal(elevator.landingDoors[19], false);
+  assert.equal(elevator.landingDoors[20], true);
+  for (let i = 0; i < 8; i++) tick(elevator, [player]);
+  const leave = { ...idleInput(player), forward: 1, yaw: Math.PI };
+  for (let i = 0; i < 20; i++) tick(elevator, [player], [leave]);
+  assert.equal(player.inCab, false);
+  assert.equal(player.y, GROUND_Y);
+  assert.equal(player.grounded, true);
 });

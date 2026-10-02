@@ -1,5 +1,6 @@
 import { DbConnection } from './module_bindings';
 import type { ElevatorState, InputState, PlayerState } from '../shared/simulation';
+import { normalizeLandingState } from '../shared/simulation';
 
 export type PlayerReplica = PlayerState & { slot: number; online: boolean; sampleMicros: bigint; identity: { toHexString(): string } };
 export class Network {
@@ -39,7 +40,7 @@ export class Network {
         const syncElevator = () => {
           const row = [...connection.db.elevator.iter()][0];
           if (row) {
-            this.elevator = { ...structuredClone(row), queue: Array.from(row.queue), landingOpen: Array.from(row.landingOpen) };
+            this.elevator = normalizeLandingState({ ...structuredClone(row), queue: Array.from(row.queue), landingOpen: Array.from(row.landingOpen) });
             this.elevatorReceivedAt = performance.now();
           }
         };

@@ -1,6 +1,9 @@
 /** Shared by the authoritative reducer and browser prediction. No rendering or SDK imports. */
 export const FLOORS = 20;
 export const FLOOR_HEIGHT = 4;
+export const GROUND_FLOOR = 0;
+export const GROUND_Y = -4;
+export const LANDING_COUNT = FLOORS + 1;
 export const CAB_HALF = 1.8;
 export const CAB_HEIGHT = 3;
 export const DOOR_HALF_WIDTH = 0.85;
@@ -69,19 +72,47 @@ export interface PlayerState {
 }
 
 export function floorY(floor: number): number {
-  return (floor - 1) * FLOOR_HEIGHT;
+  return floor === GROUND_FLOOR ? GROUND_Y : (floor - 1) * FLOOR_HEIGHT;
 }
 
 export function validFloor(floor: number): boolean {
-  return Number.isInteger(floor) && floor >= 1 && floor <= FLOORS;
+  return Number.isInteger(floor) && floor >= GROUND_FLOOR && floor <= FLOORS;
+}
+
+/** Append G instead of shifting the existing persisted door indexes for floors 1–20. */
+export function landingIndex(floor: number): number {
+  return floor === GROUND_FLOOR ? FLOORS : floor - 1;
+}
+
+export function landingFloor(index: number): number {
+  return index === FLOORS ? GROUND_FLOOR : index + 1;
+}
+
+export function floorAtY(y: number): number {
+  return Math.round(y / FLOOR_HEIGHT) + 1;
+}
+
+export function floorLabel(floor: number): string {
+  return floor === GROUND_FLOOR ? 'G' : String(floor);
+}
+
+/** Upgrade legacy twenty-door snapshots in place without changing poses or numbered floors. */
+export function normalizeLandingState(elevator: ElevatorState): ElevatorState {
+  if (elevator.landingDoors.length !== LANDING_COUNT) {
+    elevator.landingDoors = Array.from({ length: LANDING_COUNT }, (_, i) => elevator.landingDoors[i] ?? false);
+  }
+  if (elevator.landingOpen.length !== LANDING_COUNT) {
+    elevator.landingOpen = Array.from({ length: LANDING_COUNT }, (_, i) => elevator.landingOpen[i] ?? 0);
+  }
+  return elevator;
 }
 
 export function initialElevator(): ElevatorState {
   return {
     id: 0, y: 0, velocity: 0, currentFloor: 1, targetFloor: 1,
     phase: 'idle', door: 1, queue: [], phaseTime: ARRIVAL_HOLD,
-    landingDoors: Array.from({ length: FLOORS }, () => false),
-    landingOpen: Array.from({ length: FLOORS }, () => 0), sampleMicros: 0n,
+    landingDoors: Array.from({ length: LANDING_COUNT }, () => false),
+    landingOpen: Array.from({ length: LANDING_COUNT }, () => 0), sampleMicros: 0n,
   };
 }
 
@@ -128,9 +159,11 @@ export function setDoor(elevator: ElevatorState, open: boolean): boolean {
 /** Exterior swing doors are manual, and can only be unlocked by the docked cabin. */
 export function toggleLandingDoor(elevator: ElevatorState, floor: number): boolean {
   if (!docked(elevator, floor)) return false;
-  elevator.landingDoors[floor - 1] = !elevator.landingDoors[floor - 1];
+  normalizeLandingState(elevator);
+  const index = landingIndex(floor);
+  elevator.landingDoors[index] = !elevator.landingDoors[index];
   elevator.phaseTime = ARRIVAL_HOLD;
-  if (elevator.landingDoors[floor - 1]) elevator.phase = 'opening';
+  if (elevator.landingDoors[index]) elevator.phase = 'opening';
   return true;
 }
 
@@ -141,13 +174,14 @@ export function doorwayOccupied(player: PlayerState, elevator: ElevatorState): b
 }
 
 export function stepElevator(elevator: ElevatorState, dt: number): void {
+  normalizeLandingState(elevator);
   const h = Math.max(0, Math.min(dt, TICK_DT));
   const oldY = elevator.y;
   if (elevator.phase === 'closing' || elevator.phase === 'moving') {
     elevator.landingDoors.fill(false);
   }
-  for (let i = 0; i < FLOORS; i++) {
-    const target = elevator.landingDoors[i] && docked(elevator, i + 1) ? 1 : 0;
+  for (let i = 0; i < LANDING_COUNT; i++) {
+    const target = elevator.landingDoors[i] && docked(elevator, landingFloor(i)) ? 1 : 0;
     elevator.landingOpen[i] = approach(elevator.landingOpen[i]!, target, LANDING_DOOR_SPEED * h);
   }
   if (elevator.phase === 'idle') {
@@ -255,9 +289,9 @@ export function stepPlayer(
       collideBox(player, oldX, oldZ, -CAB_HALF, CAB_HALF, -CAB_HALF - 0.12, -CAB_HALF);
       collideBox(player, oldX, oldZ, -CAB_HALF, -DOOR_HALF_WIDTH, CAB_HALF, CAB_HALF + 0.12);
       collideBox(player, oldX, oldZ, DOOR_HALF_WIDTH, CAB_HALF, CAB_HALF, CAB_HALF + 0.12);
-      const floor = Math.round(cabY / FLOOR_HEIGHT) + 1;
+      const floor = floorAtY(cabY);
       const passable = validFloor(floor) && Math.abs(cabY - floorY(floor)) < 0.025 &&
-        elevator.phase !== 'moving' && elevator.door >= 0.88 && elevator.landingOpen[floor - 1]! >= 0.88;
+        elevator.phase !== 'moving' && elevator.door >= 0.88 && (elevator.landingOpen[landingIndex(floor)] ?? 0) >= 0.88;
       if (!passable) collideBox(player, oldX, oldZ, -DOOR_HALF_WIDTH, DOOR_HALF_WIDTH, CAB_HALF, CAB_HALF + 0.12);
       if (player.inCab && player.y + height > cabY + CAB_HEIGHT) {
         player.y = cabY + CAB_HEIGHT - height;
@@ -266,9 +300,9 @@ export function stepPlayer(
       }
     }
     // Closed exterior gates stay locked even while the cabin is elsewhere.
-    for (let floor = 1; floor <= FLOORS; floor++) {
+    for (let floor = GROUND_FLOOR; floor <= FLOORS; floor++) {
       const y = floorY(floor);
-      if (player.y < y + 2.65 && player.y + height > y && elevator.landingOpen[floor - 1]! < 0.88) {
+      if (player.y < y + 2.65 && player.y + height > y && (elevator.landingOpen[landingIndex(floor)] ?? 0) < 0.88) {
         collideBox(player, oldX, oldZ, -DOOR_HALF_WIDTH, DOOR_HALF_WIDTH, CAB_HALF + 0.12, CAB_HALF + 0.2);
       }
       if (Math.abs(player.x) <= PLATFORM_HALF_WIDTH && player.z >= CAB_HALF && player.z <= PLATFORM_FRONT) {
@@ -276,7 +310,7 @@ export function stepPlayer(
         hitUnderside(player, oldY, height, y - 0.22);
       }
     }
-    if (Math.abs(player.x) <= 18 && Math.abs(player.z) <= 18) land(player, oldY, -4);
+    if (Math.abs(player.x) <= 18 && Math.abs(player.z) <= 18) land(player, oldY, GROUND_Y);
     const overCab = Math.abs(player.x) <= CAB_HALF && Math.abs(player.z) <= CAB_HALF;
     if (overCab) {
       if (player.inCab) land(player, oldY, cabY);

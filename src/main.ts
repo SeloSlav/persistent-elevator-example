@@ -5,24 +5,25 @@ import { Network } from './network';
 import { PointerCapture } from './pointer-capture';
 import { createFpLookInertiaState, resetFpLookInertia, stepFpLookInertia, stepFpFreeLookRecenter } from './fp-look';
 import { ElevatorMotion, riderDisplayY, riderFrameHandoffY } from './motion';
+import { floorIndicator } from './floor-indicator';
 import {
-  CROUCH_EYE_HEIGHT, EYE_HEIGHT,
+  CROUCH_EYE_HEIGHT, EYE_HEIGHT, GROUND_Y, floorLabel,
   initialElevator, insideCab, stepElevator, stepPlayer,
   type ElevatorState, type InputState, type PlayerState,
 } from '../shared/simulation';
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <div class="hud">
-    <div class="brand"><div class="eyebrow">A shared world / 001</div><h1>Persistent Elevator</h1><p>20 floors. Two players. One elevator.</p></div>
+    <div class="brand"><div class="eyebrow">A shared world / 001</div><h1>Persistent Elevator</h1><p>Ground + 20 floors. Two players. One elevator.</p></div>
     <div class="status"><div class="status-line"><span class="dot"></span><span id="connection">Connecting…</span></div><span class="backend" id="backend">Initializing renderer</span></div>
     <div class="crosshair"></div><div class="prompt" id="prompt"></div>
-    <div class="bottom"><div class="telemetry"><div class="floor-line"><span class="floor-number" id="floor">01</span><div class="floor-state" id="phase">Doors open<br>Ground landing</div></div><div class="queue" id="queue">No stops queued</div></div>
+    <div class="bottom"><div class="telemetry"><div class="floor-line"><span class="floor-number" id="floor">01</span><span class="travel-direction" id="direction"></span><div class="floor-state" id="phase">Doors open<br>Floor 1</div></div><div class="queue" id="queue">No stops queued</div></div>
     <div class="controls"><div><kbd>W A S D</kbd> move <kbd>Shift</kbd> sprint <kbd>Space</kbd> jump</div><div><kbd>C</kbd> crouch <kbd>Alt</kbd> free look <kbd>R</kbd> respawn</div><div><kbd>Click / E</kbd> interact <kbd>Mouse</kbd> look <kbd>Esc</kbd> pause</div></div></div>
     <div class="debug" id="debug"></div>
     <div class="overlay" id="overlay"><div class="card"><div class="eyebrow">Persistent multiplayer example</div><h2>Going<br>somewhere?</h2><p>Share a ride, pick any floor, and step out into the sky. Open a second tab to bring another player along.</p><button id="play" disabled>Connecting…</button><div class="note" id="note">Enter to capture the mouse · Click or E to interact<br>Anonymous guests. No account or sign-in.</div><div class="error" id="error"></div><div id="browser-help" hidden><a id="open-browser">Open in Edge ↗</a><button id="copy-url">Copy game URL</button></div></div></div>
   </div>`;
 
-const ui = Object.fromEntries(['connection','backend','prompt','floor','phase','queue','debug','overlay','play','note','error','browser-help'].map(id => [id, document.getElementById(id)!]));
+const ui = Object.fromEntries(['connection','backend','prompt','floor','direction','phase','queue','debug','overlay','play','note','error','browser-help'].map(id => [id, document.getElementById(id)!]));
 const params = new URLSearchParams(location.search);
 const debugMode = params.get('debug') === '1';
 const scene = new THREE.Scene();
@@ -208,9 +209,12 @@ function updateHud() {
   const row = network.local;
   ui.connection.textContent = network.ready ? `${network.count} / 2 players · live` : network.status;
   document.querySelector('.dot')!.classList.toggle('online', network.ready);
-  ui.floor.textContent = String(displayElevator.currentFloor).padStart(2,'0');
-  ui.phase.innerHTML = `${displayElevator.phase === 'moving' ? `To floor ${displayElevator.targetFloor}` : displayElevator.phase === 'idle' ? 'At landing' : `${displayElevator.phase} doors`}<br>${Math.round(displayElevator.y)} m above floor 01`;
-  ui.queue.textContent = displayElevator.queue.length ? `Next stops: ${displayElevator.queue.map(f => String(f).padStart(2,'0')).join(' → ')}` : 'No stops queued';
+  const indication = floorIndicator(displayElevator);
+  ui.floor.textContent = indication.floor === 0 ? 'G' : indication.label.padStart(2,'0');
+  ui.direction.textContent = indication.direction === 'up' ? '↑' : indication.direction === 'down' ? '↓' : '';
+  const destination = displayElevator.targetFloor === 0 ? 'ground' : `floor ${displayElevator.targetFloor}`;
+  ui.phase.innerHTML = `${displayElevator.phase === 'moving' ? `To ${destination}` : displayElevator.phase === 'idle' ? indication.floor === 0 ? 'Ground plaza' : 'At landing' : `${displayElevator.phase} doors`}<br>${Math.round(displayElevator.y-GROUND_Y)} m above ground`;
+  ui.queue.textContent = displayElevator.queue.length ? `Next stops: ${displayElevator.queue.map(floorLabel).join(' → ')}` : 'No stops queued';
   ui.overlay.classList.toggle('hidden', locked() || params.get('inspect') === '1');
   const button = ui.play as HTMLButtonElement;
   button.disabled = !network.ready || capture.pending;
@@ -244,7 +248,7 @@ renderer.setAnimationLoop(() => {
       const newPlayer = !local;
       local = { ...row };
       if ((local.inCab || local.onRoof) && network.elevator) local.y += simulationElevator.y - network.elevator.y;
-      if (newPlayer) { look.bodyYaw = params.get('view') === 'panel' ? 0 : row.yaw; crouch = row.crouch; jumpSeq = row.jumpSeq; inputSeq = row.seq; }
+      if (newPlayer) { look.bodyYaw = row.yaw; crouch = row.crouch; jumpSeq = row.jumpSeq; inputSeq = row.seq; }
       inputSeq = Math.max(inputSeq, row.seq);
       jumpSeq = Math.max(jumpSeq, row.jumpSeq);
       if (old && old.distanceTo(new THREE.Vector3(local.x, local.y, local.z)) < 2) {
@@ -301,9 +305,10 @@ renderer.setAnimationLoop(() => {
     applyCameraLook();
   } else {
     if (params.get('view') === 'far') { camera.position.set(35,44,78); camera.lookAt(0,36,0); }
-    else if (params.get('inspect') === '1' && params.get('view') === 'panel') { camera.position.set(-.55,displayElevator.y+1.55,.25); camera.rotation.set(0,0,0); }
+    else if (params.get('inspect') === '1' && params.get('view') === 'ground') { camera.position.set(5,-1.3,7); camera.lookAt(0,-2.5,1.8); }
+    else if (params.get('inspect') === '1' && params.get('view') === 'panel') { camera.position.set(.78,displayElevator.y+1.65,.70); camera.lookAt(1.326,displayElevator.y+1.52,1.765); }
     else if (params.get('inspect') === '1' && params.get('view') === 'doors') { camera.position.set(0,displayElevator.y+1.55,-.8); camera.rotation.set(0,Math.PI,0); }
-    else if (params.get('inspect') === '1' && params.get('view') === 'cab') { camera.position.set(1.25,displayElevator.y+2.15,1.35); camera.lookAt(0,displayElevator.y+1.4,-.7); }
+    else if (params.get('inspect') === '1' && params.get('view') === 'cab') { camera.position.set(-1.2,displayElevator.y+2.05,-1.3); camera.lookAt(.2,displayElevator.y+1.45,1.4); }
     else { camera.position.set(10, displayElevator.y+6.5,12); camera.lookAt(0,displayElevator.y+1.4,0); }
   }
   camera.updateMatrixWorld();
@@ -318,7 +323,8 @@ renderer.setAnimationLoop(() => {
   if (!target) targetObject = undefined;
   world.setInteractionTarget(locked() ? targetObject : undefined);
   document.querySelector('.crosshair')!.classList.toggle('active', locked() && !!target);
-  ui.prompt.textContent = !locked() ? '' : target?.type === 'floor' ? `Click / E · Floor ${target.floor}` : target?.type === 'hail' ? `Click / E · Call floor ${target.floor}` : target?.type === 'landingDoor' ? 'Click / E · Landing gate' : target?.type === 'door' ? `Click / E · ${target.open ? 'Open' : 'Close'} doors` : '';
+  const floorName = target?.floor === 0 ? 'Ground' : `Floor ${target?.floor}`;
+  ui.prompt.textContent = !locked() ? '' : target?.type === 'floor' ? `Click / E · ${floorName}` : target?.type === 'hail' ? `Click / E · Call ${floorName.toLowerCase()}` : target?.type === 'landingDoor' ? 'Click / E · Landing gate' : target?.type === 'door' ? `Click / E · ${target.open ? 'Open' : 'Close'} doors` : '';
   updateHud();
   renderer.render(scene,camera);
   renderStats.drawCalls = renderer.info.render.drawCalls;

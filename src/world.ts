@@ -27,6 +27,8 @@ import {
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createDuskEnvironment, createSurfaceMaterials, setSurfaceMaterialDebug, type SurfaceDebugMode } from './materials';
+import { GROUND_FLOOR, GROUND_Y, LANDING_COUNT, floorLabel, floorY, landingFloor, landingIndex } from '../shared/simulation';
+import { floorIndicator } from './floor-indicator';
 
 export interface ElevatorVisualState {
   y: number;
@@ -35,6 +37,7 @@ export interface ElevatorVisualState {
   targetFloor: number | null;
   phase: string;
   queue: number[];
+  velocity?: number;
   landingOpen?: number[];
   landingDoors?: boolean[];
 }
@@ -220,12 +223,24 @@ export function createWorld(scene: Scene) {
     return mesh;
   }
 
-  // A small, unguarded plaza catches players who jump off a landing.
-  box(world, concrete, 0, -4.22, 0, 36, 0.44, 36);
+  // The plaza and G cab share physics y=-4. The insert under the shaft is
+  // hidden while the cab occupies it, leaving exactly one visible floor.
+  box(world, concrete, -9.9, GROUND_Y - 0.22, 0, 16.2, 0.44, 36);
+  box(world, concrete, 9.9, GROUND_Y - 0.22, 0, 16.2, 0.44, 36);
+  box(world, concrete, 0, GROUND_Y - 0.22, -9.9, 3.6, 0.44, 16.2);
+  box(world, concrete, 0, GROUND_Y - 0.22, 9.9, 3.6, 0.44, 16.2);
+  const groundShaftInsert = box(world, concrete, 0, GROUND_Y - 0.22, 0, 3.6, 0.44, 3.6);
   const gridParts: Array<{ position: Vector3; scale: Vector3; rotation?: number }> = [];
   for (let n = -16; n <= 16; n += 2) {
-    gridParts.push({ position: new Vector3(n, -3.99, 0), scale: new Vector3(0.017, 0.006, 34) });
-    gridParts.push({ position: new Vector3(0, -3.99, n), scale: new Vector3(34, 0.006, 0.017) });
+    if (Math.abs(n) < CAB_HALF) {
+      for (const side of [-1, 1]) {
+        gridParts.push({ position: new Vector3(n, GROUND_Y + 0.01, side * 9.42), scale: new Vector3(0.017, 0.006, 15.16) });
+        gridParts.push({ position: new Vector3(side * 9.42, GROUND_Y + 0.01, n), scale: new Vector3(15.16, 0.006, 0.017) });
+      }
+    } else {
+      gridParts.push({ position: new Vector3(n, GROUND_Y + 0.01, 0), scale: new Vector3(0.017, 0.006, 34) });
+      gridParts.push({ position: new Vector3(0, GROUND_Y + 0.01, n), scale: new Vector3(34, 0.006, 0.017) });
+    }
   }
   batchBoxes(world, gridParts, material(0x828e94, 1, 0));
   box(world, dark, 0, -3.96, -3.05, 4.7, 0.05, 0.8);
@@ -235,13 +250,14 @@ export function createWorld(scene: Scene) {
   // One instanced structural assembly keeps the open tower inexpensive.
   const structure: Array<{ position: Vector3; scale: Vector3; rotation?: number }> = [];
   const top = (FLOORS - 1) * FLOOR_HEIGHT + 3.5;
+  const shaftBottom = GROUND_Y - 0.45;
   for (const x of [-2.08, 2.08]) {
     for (const z of [-2.08, 2.08]) {
-      structure.push({ position: new Vector3(x, (top - 4) / 2, z), scale: new Vector3(0.14, top + 4, 0.14) });
+      structure.push({ position: new Vector3(x, (top + shaftBottom) / 2, z), scale: new Vector3(0.14, top - shaftBottom, 0.14) });
     }
   }
-  for (let floor = 1; floor <= FLOORS; floor++) {
-    const y = (floor - 1) * FLOOR_HEIGHT;
+  for (let floor = GROUND_FLOOR; floor <= FLOORS; floor++) {
+    const y = floorY(floor);
     for (const x of [-2.08, 2.08]) {
       structure.push({ position: new Vector3(x, y - 0.25, 0), scale: new Vector3(0.16, 0.18, 4.32) });
     }
@@ -260,8 +276,8 @@ export function createWorld(scene: Scene) {
   const shaftStructure = batchBoxes(world, structure, steel);
   shaftStructure.castShadow = true;
   // Two guide rails remain visible through the rear of the open shaft.
-  box(world, aluminium, -1.4, (top - 4) / 2, -1.97, 0.06, top + 4, 0.08);
-  box(world, aluminium, 1.4, (top - 4) / 2, -1.97, 0.06, top + 4, 0.08);
+  box(world, aluminium, -1.4, (top + shaftBottom) / 2, -1.97, 0.06, top - shaftBottom, 0.08);
+  box(world, aluminium, 1.4, (top + shaftBottom) / 2, -1.97, 0.06, top - shaftBottom, 0.08);
 
   const landingPivots: Group[] = [];
   const callLights: MeshStandardMaterial[] = [];
@@ -296,21 +312,22 @@ export function createWorld(scene: Scene) {
     mesh.userData.decoration = true;
     world.add(mesh);
   }
-  for (let floor = 1; floor <= FLOORS; floor++) {
-    const y = (floor - 1) * FLOOR_HEIGHT;
-    platformParts.push({ position: new Vector3(0, y - 0.11, 1.8 + PLATFORM_DEPTH / 2), scale: new Vector3(7.6, 0.22, PLATFORM_DEPTH) });
+  for (let index = 0; index < LANDING_COUNT; index++) {
+    const floor = landingFloor(index);
+    const y = floorY(floor);
+    if (floor !== GROUND_FLOOR) platformParts.push({ position: new Vector3(0, y - 0.11, 1.8 + PLATFORM_DEPTH / 2), scale: new Vector3(7.6, 0.22, PLATFORM_DEPTH) });
     // Fascia sits outside and below the slab, so its top never overlays concrete.
-    edgeParts.push({ position: new Vector3(0, y - 0.115, 7.824), scale: new Vector3(7.6, 0.16, 0.035) });
+    if (floor !== GROUND_FLOOR) edgeParts.push({ position: new Vector3(0, y - 0.115, 7.824), scale: new Vector3(7.6, 0.16, 0.035) });
     for (const side of [-1, 1]) {
-      edgeParts.push({ position: new Vector3(side * 3.824, y - 0.115, 4.8), scale: new Vector3(0.035, 0.16, 6) });
+      if (floor !== GROUND_FLOOR) edgeParts.push({ position: new Vector3(side * 3.824, y - 0.115, 4.8), scale: new Vector3(0.035, 0.16, 6) });
       // Under-slab cantilevers add a structural silhouette without obstructing play.
-      platformBraces.push({ position: new Vector3(side * 2.85, y - 0.41, 4.8), scale: new Vector3(0.09, 0.25, 5.8) });
+      if (floor !== GROUND_FLOOR) platformBraces.push({ position: new Vector3(side * 2.85, y - 0.41, 4.8), scale: new Vector3(0.09, 0.25, 5.8) });
       fixtureParts.push({ position: new Vector3(side * 0.95, y + 2.815, 2.067), scale: new Vector3(0.16, 0.055, 0.08) });
       fixtureLights.push({ position: new Vector3(side * 0.95, y + 2.815, 2.113), scale: new Vector3(0.11, 0.021, 0.012) });
-      hazardStripe(side * 3.47, y, 4.65, 0.16, 5.38);
+      if (floor !== GROUND_FLOOR) hazardStripe(side * 3.47, y, 4.65, 0.16, 5.38);
     }
     // End strip stops short of each side stripe; corners never overlap.
-    hazardStripe(0, y, 7.49, 6.72, 0.18);
+    if (floor !== GROUND_FLOOR) hazardStripe(0, y, 7.49, 6.72, 0.18);
     // The gate frame ends at the doorway; the rest of every platform is open.
     // Posts end at the underside of the lintel, avoiding stacked top caps.
     for (const side of [-1, 1]) {
@@ -324,7 +341,7 @@ export function createWorld(scene: Scene) {
     pivot.position.set(-DOOR_HALF, y, 1.97);
     pivot.name = `Landing ${floor} swing door`;
     world.add(pivot);
-    landingPivots.push(pivot);
+    landingPivots[index] = pivot;
     const action: Action = { type: 'landingDoor', floor };
     // The 19 × 94 cm window is a real aperture in the painted door leaf.
     const leafWidth = DOOR_HALF * 2;
@@ -362,16 +379,17 @@ export function createWorld(scene: Scene) {
     fittedBox(world, steel, 1.28, y + 1.28, 1.93, 0.085, 2.56, 0.085, 0.01);
     fittedBox(world, aluminium, 1.28, y + 1.695, 1.996, 0.40, 0.66, 0.078, 0.018);
     fittedBox(world, dark, 1.28, y + 1.695, 2.041, 0.35, 0.60, 0.018, 0.009);
-    label(world, String(floor).padStart(2, '0'), 1.28, y + 1.80, 2.061, 0.27, 0.15, { fontSize: 76 });
+    label(world, floorLabel(floor), 1.28, y + 1.80, 2.061, 0.27, 0.15, { fontSize: 76 });
     const callMat = new MeshStandardMaterial({ color: colors.dark, emissive: colors.amber, emissiveIntensity: 0.025, roughness: 0.5, metalness: 0.3 });
-    callLights.push(callMat);
+    callLights[index] = callMat;
     const call = new Mesh(buttonGeometry, callMat);
     call.scale.setScalar(0.75);
     call.position.set(1.28, y + 1.52, 2.061);
     call.userData.targetOffsetZ = 0.041;
+    call.userData.targetScale = 0.75;
     world.add(call);
     interactive(call, { type: 'hail', floor });
-    callButtons.push(call);
+    callButtons[index] = call;
     const callRim = new Mesh(rimGeometry, aluminium);
     callRim.scale.setScalar(0.75);
     callRim.position.set(1.28, y + 1.52, 2.056);
@@ -381,8 +399,8 @@ export function createWorld(scene: Scene) {
     fittedBox(world, steel, -1.16, y + 2.22, 1.94, 0.50, 0.055, 0.065, 0.006);
     fittedBox(world, aluminium, -1.46, y + 2.17, 1.986, 0.84, 0.65, 0.065, 0.018);
     fittedBox(world, dark, -1.46, y + 2.17, 2.027, 0.77, 0.58, 0.014, 0.007);
-    label(world, `${String(floor).padStart(2, '0')}`, -1.46, y + 2.23, 2.046, 0.64, 0.35, { fontSize: 86 });
-    label(world, 'LANDING', -1.46, y + 1.97, 2.046, 0.61, 0.07, { width: 256, height: 64, fontSize: 36 });
+    label(world, floorLabel(floor), -1.46, y + 2.23, 2.046, 0.64, 0.35, { fontSize: 86 });
+    label(world, floor === GROUND_FLOOR ? 'GROUND' : 'LANDING', -1.46, y + 1.97, 2.046, 0.61, 0.07, { width: 256, height: 64, fontSize: 36 });
     compileFittings(pivot);
   }
   batchBoxes(world, platformParts, concrete).castShadow = true;
@@ -417,9 +435,10 @@ export function createWorld(scene: Scene) {
     fittedBox(cab, aluminium, side * 1.778, 1.54, -1.768, 0.033, 2.43, 0.031, 0.009);
     fittedBox(cab, enamel, side * 1.282, 1.515, -1.780, 0.87, 2.39, 0.031, 0.012);
   }
+  fittedBox(cab, enamel, 0, 1.515, -1.780, 1.65, 2.39, 0.031, 0.012);
   fittedBox(cab, aluminium, 0, 0.17, -1.778, 3.53, 0.23, 0.03, 0.01);
   fittedBox(cab, aluminium, 0, 2.79, -1.776, 3.53, 0.055, 0.031, 0.01);
-  // Circular handrails with stand-offs. Rear ends remain clear of the panel.
+  // Circular handrails and small stand-offs follow the wall bays.
   function handrail(x: number, y: number, z: number, length: number, alongX = false) {
     const mesh = new Mesh(new CapsuleGeometry(0.027, length - 0.054, 4, 16), aluminium);
     if (alongX) mesh.rotation.z = Math.PI / 2;
@@ -431,10 +450,11 @@ export function createWorld(scene: Scene) {
   }
   for (const side of [-1, 1]) {
     handrail(side * 1.66, 1.02, -0.03, 2.95);
-    handrail(side * 1.30, 1.02, -1.66, 0.72, true);
     for (const z of [-1.24, 1.18]) fittedBox(cab, aluminium, side * 1.726, 1.02, z, 0.102, 0.04, 0.07, 0.012);
     fittedBox(cab, aluminium, side * 1.39, 1.02, -1.726, 0.07, 0.04, 0.102, 0.012);
   }
+  handrail(0, 1.02, -1.66, 3.21, true);
+  fittedBox(cab, aluminium, 0, 1.02, -1.726, 0.07, 0.04, 0.102, 0.012);
   // The front side pockets leave exactly the collision model's 1.7 m opening.
   for (const side of [-1, 1]) {
     // A true pocket: the inner cover ends at z=1.816, the outside cover
@@ -444,7 +464,14 @@ export function createWorld(scene: Scene) {
     box(cab, ochre, side * (CAB_HALF + DOOR_HALF) / 2, 1.5, 1.918, CAB_HALF - DOOR_HALF, 3, 0.024).castShadow = true;
     // Jambs finish at the header rather than overlapping its end caps.
     fittedBox(cab, aluminium, side * 0.889, 1.32, 1.934, 0.058, 2.64, 0.023, 0.008);
-    fittedBox(cab, aluminium, side * 1.326, 1.46, 1.785, 0.74, 2.68, 0.018, 0.007);
+    if (side < 0) fittedBox(cab, aluminium, side * 1.326, 1.46, 1.785, 0.74, 2.68, 0.018, 0.007);
+    else {
+      // The compact station is recessed into a real opening in this cover.
+      // Four separate panels leave an aperture, rather than overlaying steel.
+      for (const x of [1.026, 1.626]) fittedBox(cab, aluminium, x, 1.46, 1.785, 0.14, 2.68, 0.018, 0.006);
+      fittedBox(cab, aluminium, 1.326, 0.477, 1.785, 0.46, 0.714, 0.018, 0.006);
+      fittedBox(cab, aluminium, 1.326, 2.490, 1.785, 0.46, 0.62, 0.018, 0.006);
+    }
   }
   box(cab, ochre, 0, 2.825, 1.86, 1.7, 0.35, 0.12).castShadow = true;
   fittedBox(cab, aluminium, 0, 2.679, 1.934, 1.836, 0.058, 0.023, 0.008);
@@ -489,69 +516,92 @@ export function createWorld(scene: Scene) {
   cabSpot.shadow.camera.far = 6;
   cab.add(cabSpot, cabSpot.target);
 
-  // Back-wall controls stay in one direct glance from the entrance.
+  // A 450 × 1250 mm real control station is recessed into the right doorway
+  // pocket. Inward-facing controls project less than 4 cm past the wall skin.
   const panel = new Group();
-  panel.position.set(0, 0, -1.736);
+  panel.name = 'Compact right doorway control station';
+  panel.position.set(1.326, 0, 1.802);
+  panel.rotation.y = Math.PI;
   cab.add(panel);
-  fittedBox(panel, aluminium, 0, 1.5, 0.035, 1.65, 2.08, 0.07, 0.023);
-  fittedBox(panel, steel, 0, 1.5, 0.081, 1.56, 1.99, 0.014, 0.006);
-  fittedBox(panel, dark, 0, 1.5, 0.096, 1.48, 1.91, 0.016, 0.007);
-  label(panel, 'SELECT YOUR FLOOR', 0, 2.29, 0.115, 1.26, 0.115, { width: 768, height: 96, fontSize: 48 });
-  label(panel, 'SHARED / PERSISTENT', 0, 2.14, 0.115, 1.16, 0.065, { width: 768, height: 64, fontSize: 42, color: '#9daaa7' });
-  const fastener = new CylinderGeometry(0.023, 0.023, 0.012, 20);
+  fittedBox(panel, dark, 0, 1.50, 0.011, 0.47, 1.28, 0.006, 0.009);
+  fittedBox(panel, aluminium, 0, 1.50, 0.017, 0.45, 1.25, 0.010, 0.008);
+  label(panel, 'ELEVATOR', 0, 2.087, 0.025, 0.235, 0.023, { width: 384, height: 64, fontSize: 42, color: '#24373a' });
+  const fastener = new CylinderGeometry(0.0045, 0.0045, 0.003, 24);
   fastener.rotateX(Math.PI / 2);
-  for (const x of [-0.699, 0.699]) for (const y of [0.63, 2.37]) {
+  for (const x of [-0.203, 0.203]) for (const y of [0.922, 2.077]) {
     const screw = new Mesh(fastener, aluminium);
-    screw.position.set(x, y, 0.12);
+    screw.position.set(x, y, 0.025);
     screw.userData.decoration = true;
     screw.receiveShadow = true;
     panel.add(screw);
+    fittedBox(panel, dark, x, y, 0.0276, 0.0055, 0.0009, 0.0005, 0.0002);
   }
-  const buttonMaterials: MeshStandardMaterial[] = [];
-  const buttonNumberMaterials: MeshBasicMaterial[] = [];
-  const floorButtons: Mesh[] = [];
-  for (let floor = 1; floor <= FLOORS; floor++) {
-    const column = (floor - 1) % 4;
-    const row = Math.floor((floor - 1) / 4);
-    const x = (column - 1.5) * 0.317;
-    const y = 1.9 - row * 0.278;
-    const rim = new Mesh(rimGeometry, aluminium);
-    rim.position.set(x, y, 0.106);
-    panel.add(rim);
-    interactive(rim, { type: 'floor', floor });
-    const buttonMat = new MeshStandardMaterial({ color: colors.dark, roughness: 0.62, metalness: 0.15, emissive: colors.amber, emissiveIntensity: 0.02 });
-    buttonMaterials.push(buttonMat);
-    const button = new Mesh(buttonGeometry, buttonMat);
-    button.position.set(x, y, 0.125);
-    button.userData.targetOffsetZ = 0.054;
-    panel.add(button);
-    interactive(button, { type: 'floor', floor });
-    floorButtons.push(button);
-    const number = label(panel, String(floor), x, y, 0.179, 0.144, 0.144, { fontSize: floor > 9 ? 72 : 81, color: '#ffffff' });
-    buttonNumberMaterials.push(number.material);
-    interactive(number, { type: 'floor', floor });
-  }
-  for (const [open, x, text] of [[true, -0.24, '◀ ▶'], [false, 0.24, '▶ ◀']] as const) {
-    fittedBox(panel, aluminium, x, 0.575, 0.12, 0.38, 0.17, 0.025, 0.009);
-    const face = fittedBox(panel, dark, x, 0.575, 0.15, 0.337, 0.132, 0.018, 0.008);
-    interactive(face, { type: 'door', open });
-    const symbol = label(panel, text, x, 0.575, 0.175, 0.29, 0.095, { width: 256, height: 64, fontSize: 42 });
-    interactive(symbol, { type: 'door', open });
-  }
-  // The floor indicator is deliberately readable without post-processing.
-  fittedBox(cab, aluminium, 0, 2.715, -1.717, 1.65, 0.295, 0.078, 0.021);
-  fittedBox(cab, dark, 0, 2.715, -1.661, 1.50, 0.215, 0.014, 0.006);
+  // Shared crisp emissive display texture drives the doorway and station.
   const displayCanvas = document.createElement('canvas');
   displayCanvas.width = 512;
-  displayCanvas.height = 96;
+  displayCanvas.height = 128;
   const displayContext = displayCanvas.getContext('2d')!;
   const displayTexture = new CanvasTexture(displayCanvas);
   displayTexture.colorSpace = SRGBColorSpace;
-  const display = new Mesh(planeGeometry, new MeshBasicMaterial({ map: displayTexture }));
-  display.position.set(0, 2.715, -1.642);
-  display.scale.set(1.42, 0.175, 1);
-  cab.add(display);
-  label(cab, '20 FLOORS · TWO RIDERS', 0, 0.345, -1.748, 1.40, 0.065, { width: 768, height: 64, fontSize: 42 });
+  displayTexture.minFilter = LinearFilter;
+  displayTexture.magFilter = LinearFilter;
+  const displayMaterial = new MeshBasicMaterial({ map: displayTexture, toneMapped: false });
+  fittedBox(panel, dark, 0, 2.027, 0.024, 0.318, 0.071, 0.005, 0.004);
+  const stationDisplay = new Mesh(planeGeometry, displayMaterial);
+  stationDisplay.position.set(0, 2.027, 0.030);
+  stationDisplay.scale.set(0.297, 0.060, 1);
+  panel.add(stationDisplay);
+  const buttonMaterials: MeshStandardMaterial[] = [];
+  const buttonNumberMaterials: MeshBasicMaterial[] = [];
+  const floorButtons: Mesh[] = [];
+  const controlScale = 0.26;
+  for (let index = 0; index < LANDING_COUNT; index++) {
+    const floor = landingFloor(index);
+    const column = floor === GROUND_FLOOR ? 0 : (floor - 1) % 2;
+    const row = floor === GROUND_FLOOR ? -1 : Math.floor((floor - 1) / 2);
+    const x = (column - 0.5) * 0.168;
+    const y = 1.230 + row * 0.072;
+    const rim = new Mesh(rimGeometry, aluminium);
+    rim.scale.setScalar(controlScale);
+    rim.position.set(x, y, 0.022);
+    panel.add(rim);
+    interactive(rim, { type: 'floor', floor });
+    const buttonMat = new MeshStandardMaterial({ color: colors.dark, roughness: 0.44, metalness: 0.2, emissive: colors.amber, emissiveIntensity: 0.015 });
+    buttonMaterials[index] = buttonMat;
+    const button = new Mesh(buttonGeometry, buttonMat);
+    button.scale.setScalar(controlScale);
+    button.position.set(x, y, 0.025);
+    button.userData.targetOffsetZ = 0.019;
+    button.userData.targetScale = controlScale;
+    panel.add(button);
+    interactive(button, { type: 'floor', floor });
+    floorButtons[index] = button;
+    const number = label(panel, floor === GROUND_FLOOR ? '★G' : floorLabel(floor), x, y, 0.0405, 0.041, 0.041, { fontSize: floor === GROUND_FLOOR ? 61 : floor > 9 ? 76 : 86, color: '#ffffff' });
+    buttonNumberMaterials[index] = number.material;
+    interactive(number, { type: 'floor', floor });
+  }
+  label(panel, 'GROUND', 0.076, 1.158, 0.026, 0.125, 0.023, { width: 256, height: 64, fontSize: 39, color: '#314043' });
+  for (const [open, x, text] of [[true, -0.084, '◀ ▶'], [false, 0.084, '▶ ◀']] as const) {
+    fittedBox(panel, steel, x, 1.016, 0.025, 0.088, 0.063, 0.005, 0.006);
+    const face = fittedBox(panel, dark, x, 1.016, 0.031, 0.078, 0.052, 0.006, 0.007);
+    interactive(face, { type: 'door', open });
+    const symbol = label(panel, text, x, 1.016, 0.038, 0.062, 0.033, { width: 256, height: 128, fontSize: 55, color: '#f2eee4' });
+    interactive(symbol, { type: 'door', open });
+  }
+  label(panel, 'DOORS', 0, 0.956, 0.026, 0.131, 0.019, { width: 256, height: 64, fontSize: 39, color: '#314043' });
+  // Header indicator is a compact inward-facing module above the door opening.
+  const indicator = new Group();
+  indicator.position.set(0, 2.817, 1.802);
+  indicator.rotation.y = Math.PI;
+  cab.add(indicator);
+  fittedBox(indicator, aluminium, 0, 0, 0.013, 0.53, 0.174, 0.018, 0.010);
+  fittedBox(indicator, dark, 0, 0, 0.028, 0.486, 0.132, 0.008, 0.005);
+  const display = new Mesh(planeGeometry, displayMaterial);
+  display.position.set(0, 0, 0.037);
+  display.scale.set(0.457, 0.109, 1);
+  indicator.add(display);
+  label(cab, 'CAPACITY 2 PERSONS  /  200 KG', 0, 2.55, -1.749, 0.56, 0.040, { width: 768, height: 96, fontSize: 48, color: '#42504e' });
+  compileFittings(indicator);
   compileFittings(panel);
   compileFittings(cab);
   compileFittings(world);
@@ -592,20 +642,23 @@ export function createWorld(scene: Scene) {
   const cabBounds = box(cab, debugMaterial, 0, 1.5, 0, 3.6, 3, 3.6);
   cabBounds.visible = false;
   cabBounds.userData.ignorePicking = true;
-  for (let floor = 1; floor <= FLOORS; floor++) {
-    box(debug, debugMaterial, 0, (floor - 1) * FLOOR_HEIGHT - 0.035, 4.8, 7.6, 0.07, 6);
+  for (let floor = GROUND_FLOOR; floor <= FLOORS; floor++) {
+    box(debug, debugMaterial, 0, floorY(floor) - 0.035, 4.8, 7.6, 0.07, 6);
   }
 
   let indicatorState = '';
   function updateElevator(state: ElevatorVisualState) {
     cab.position.y = state.y;
+    groundShaftInsert.visible = state.y - GROUND_Y > 0.13;
     const opening = Math.max(0, Math.min(1, state.door));
     cabDoorParts[0].position.x = -DOOR_HALF / 2 - opening * DOOR_HALF;
     cabDoorParts[1].position.x = DOOR_HALF / 2 + opening * DOOR_HALF;
-    for (let i = 0; i < FLOORS; i++) {
-      landingPivots[i].rotation.y = -(state.landingOpen?.[i] ?? (i === 0 ? 1 : 0)) * 1.55;
-      const current = state.currentFloor === i + 1;
-      const queued = state.queue.includes(i + 1) || state.targetFloor === i + 1;
+    const indication = floorIndicator({ y: state.y, targetFloor: state.targetFloor ?? state.currentFloor, phase: state.phase === 'moving' ? 'moving' : 'idle' });
+    for (let i = 0; i < LANDING_COUNT; i++) {
+      const floor = landingFloor(i);
+      landingPivots[i].rotation.y = -(state.landingOpen?.[i] ?? (floor === state.currentFloor ? opening : 0)) * 1.55;
+      const current = state.phase !== 'moving' && indication.floor === floor;
+      const queued = state.queue.includes(floor) || state.targetFloor === floor;
       buttonMaterials[i].color.setHex(current ? 0xe2a34b : queued ? 0x9b3930 : colors.dark);
       buttonMaterials[i].emissive.setHex(queued && !current ? colors.queued : colors.amber);
       buttonMaterials[i].emissiveIntensity = current ? 0.68 : queued ? 0.42 : 0.02;
@@ -613,17 +666,28 @@ export function createWorld(scene: Scene) {
       callLights[i].color.setHex(queued ? 0xa27030 : colors.dark);
       callLights[i].emissiveIntensity = queued ? 0.5 : 0.025;
     }
-    const direction = state.targetFloor == null ? '—' : state.targetFloor > state.currentFloor ? '↑' : state.targetFloor < state.currentFloor ? '↓' : '—';
-    const nextIndicator = `${String(state.currentFloor).padStart(2, '0')}  ${direction}  ${state.phase === 'moving' ? 'TRAVEL' : state.door > 0.8 ? 'OPEN' : 'READY'}`;
+    const nextIndicator = `${indication.label}/${indication.direction}`;
     if (indicatorState !== nextIndicator) {
       indicatorState = nextIndicator;
-      displayContext.fillStyle = '#181c1d';
+      displayContext.fillStyle = '#12201f';
       displayContext.fillRect(0, 0, displayCanvas.width, displayCanvas.height);
-      displayContext.fillStyle = '#ffc66d';
-      displayContext.font = '600 61px "Courier New", monospace';
+      displayContext.fillStyle = '#f3cb87';
+      displayContext.font = '600 98px "Segoe UI", Arial, sans-serif';
       displayContext.textAlign = 'center';
       displayContext.textBaseline = 'middle';
-      displayContext.fillText(indicatorState, displayCanvas.width / 2, displayCanvas.height / 2 + 4);
+      displayContext.fillText(indication.label, 310, displayCanvas.height / 2 + 2);
+      if (indication.direction !== 'idle') {
+        const up = indication.direction === 'up';
+        displayContext.strokeStyle = '#f3cb87';
+        displayContext.lineWidth = 8;
+        displayContext.lineCap = 'round';
+        displayContext.lineJoin = 'round';
+        displayContext.beginPath();
+        displayContext.moveTo(97, up ? 79 : 48);
+        displayContext.lineTo(123, up ? 49 : 78);
+        displayContext.lineTo(149, up ? 79 : 48);
+        displayContext.stroke();
+      }
       displayTexture.needsUpdate = true;
     }
   }
@@ -680,14 +744,14 @@ export function createWorld(scene: Scene) {
 
   function setInteractionTarget(object?: Object3D | null) {
     const action = object?.userData.action as Action | undefined;
-    const anchor = action?.type === 'floor' ? floorButtons[action.floor - 1] : action?.type === 'hail' ? callButtons[action.floor - 1] : undefined;
+    const anchor = action?.type === 'floor' ? floorButtons[landingIndex(action.floor)] : action?.type === 'hail' ? callButtons[landingIndex(action.floor)] : undefined;
     targetRing.visible = !!anchor;
     if (!anchor) return;
     anchor.updateWorldMatrix(true, false);
     anchor.getWorldPosition(targetRing.position);
     targetRing.quaternion.copy(anchor.getWorldQuaternion(targetRing.quaternion));
     targetRing.position.add(new Vector3(0, 0, anchor.userData.targetOffsetZ ?? 0.054).applyQuaternion(targetRing.quaternion));
-    targetRing.scale.setScalar(action?.type === 'hail' ? 0.75 : 1);
+    targetRing.scale.setScalar(anchor.userData.targetScale ?? 1);
   }
 
   const shadowDirection = new Vector3(-14, 24, 16);

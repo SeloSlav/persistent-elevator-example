@@ -27,6 +27,10 @@ Movement reducers accept bounded input and view heading, rather than a client-pr
 
 All clients subscribe to the same state. When either player presses a floor button, both receive the updated shared queue. The server then closes the interior doors, moves the cab, docks, and opens the doors. Landing gates are distinct from the automatic interior doors: a player opens the docked landing gate using E, and it closes when the cab departs.
 
+Stops are **G (floor 0, y = −4)** and numbered floors **1–20 (y = 0–76)**. G is served by the same queue and reducer paths, with a plaza call station and a manual gate. A fallen player can walk to that station, hail G, open its gate once docked, and reenter the cab. Zero-valued requests are handled explicitly and remain in the FIFO queue.
+
+The table schema is unchanged. `landingIndex` retains floor-minus-one for floors 1–20 and maps G to appended index 20. `normalizeLandingState` extends legacy twenty-entry arrays at the database/client boundaries without shifting indexes, resetting positions, or changing the active trip. The scheduled simulation uses the inverse `landingFloor` mapping for gate animation.
+
 ## Moving platforms and prediction
 
 `shared/simulation.ts` is independent of Three.js and SpacetimeDB. Both runtimes use it for the movement and elevator rules. That keeps speeds, gravity, collision bounds, door rules, and platform support aligned without copying the game simulation into a separate client implementation.
@@ -36,6 +40,8 @@ The cab advances before player movement. A rider supported by the cab follows it
 The local client predicts movement from the same inputs it submits to the server and reconciles with authoritative snapshots. Remote capsules use replicated state for presentation. Elevator rendering buffers 100 milliseconds of server-timestamped samples, interpolates with bounded cubic tangents, and extrapolates at most 100 milliseconds. Duplicate-timestamp input/queue updates replace metadata without restarting the presentation clock. An ascending or descending journey never corrects backwards when a late packet arrives.
 
 Prediction and presentation have separate elevator states. Grounded riders and the first-person camera use the rendered cabin height on every render frame, even between physics ticks; jumping riders retain their predicted height relative to the simulation cab. Horizontal movement stays immediate. The cab, doors, grounded remote riders and camera therefore share one moving frame. Render frame rate does not determine shared elevator progress.
+
+`floorIndicator` derives the current displayed floor from rendered height, switching at the midpoint between landings. It clamps to G–20 and derives the travel arrow from destination and phase. This drives both the physical LED displays and HUD. The authoritative `currentFloor` continues to identify the last docked stop, so display updates do not change docking, gate checks, or network authority.
 
 The example keeps Mammoth's WASD, Shift sprint, C crouch toggle, Space jump, Alt free look, and first-person mouse look. Locked left-click and E operate the aimed floor, call, and door controls. Speeds are 5 m/s walking, 7.5 m/s sprinting, and 2.8 m/s crouching. Gravity is 21.5 m/s², with a 5.7 m/s jump impulse. Pill bodies have a .22 m radius and standing/crouched heights of 1.78/1.2 m. Jumping inside the cab is allowed here as an intentional extension to Mammoth.
 
@@ -61,4 +67,4 @@ Republishing the module and regenerating bindings are development operations. Fo
 
 This repository is an isolated multiplayer example with one elevator and two guest slots. The player cap, input bounds, interaction checks, input timeout, and scheduled-tick guard make the core authority clear. Anonymous identities are not a substitute for production account security or a complete anti-cheat system.
 
-The world is generated from code: 20 floors, four meters apart, with simple landing platforms and a ground plaza. It does not import Mammoth assets or services. The graphics path is Three.js `WebGPURenderer`, with a WebGL2 fallback for machines without native WebGPU; the active backend is shown in the HUD.
+The world is generated from code: 20 upper floors, four meters apart, with landing platforms and a ground plaza served by G. The narrow control station beside the doors retains physical button picking and immediate queue feedback. Ground rendering has a cab footprint cutout so plaza and cab floor do not render coincident surfaces when docked at G. The world does not import Mammoth assets or services. The graphics path is Three.js `WebGPURenderer`, with a WebGL2 fallback for machines without native WebGPU; the active backend is shown in the HUD.
