@@ -3,6 +3,7 @@ import type { ElevatorState, InputState, PlayerState } from '../shared/simulatio
 
 export type PlayerReplica = PlayerState & { slot: number; online: boolean; sampleMicros: bigint; identity: { toHexString(): string } };
 export class Network {
+  constructor(private readonly spectator = false) {}
   connection?: DbConnection;
   identity = '';
   players = new Map<string, PlayerReplica>();
@@ -52,7 +53,7 @@ export class Network {
             syncPlayers(); syncElevator();
             this.ready = true;
             this.status = 'Connected';
-            this.join();
+            if (!this.spectator) this.join();
           })
           .onError(ctx => { this.error = String(ctx.event); this.status = 'Subscription failed'; })
           .subscribe(['SELECT * FROM player', 'SELECT * FROM elevator']);
@@ -72,7 +73,7 @@ export class Network {
   get local() { return this.hasSeat ? this.players.get(this.identity) : undefined; }
   get count() { return [...this.players.values()].filter(p => p.online).length; }
   join() {
-    if (!this.ready) return;
+    if (!this.ready || this.spectator) return;
     this.connection!.reducers.join({}).then(() => { this.hasSeat = true; this.revision++; this.error = ''; }).catch(error => {
       this.error = error instanceof Error ? error.message : String(error);
       // Duplicate Tab may copy sessionStorage. Give that second tab its own guest.

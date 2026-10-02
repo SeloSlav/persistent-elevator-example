@@ -1,10 +1,10 @@
 # Persistent Elevator Example
 
-![Two anonymous pill players sharing the elevator](docs/preview.jpg)
+![The rebuilt multiplayer elevator cabin](docs/preview.jpg)
 
-A small multiplayer game demonstrating a server-authoritative elevator with **Vite, TypeScript, Three.js, and SpacetimeDB**. Two anonymous players share one elevator, its doors, and its destination queue. Both players can walk around the moving cab, select any of its 20 floor buttons with E, leave onto a landing, and jump off the platform.
+A small multiplayer game demonstrating a server-authoritative elevator with **Vite, TypeScript, Three.js, and SpacetimeDB**. Two anonymous players share one elevator, its doors, and its destination queue. Both players can walk around the moving cab, select any of its 20 floor buttons by clicking or pressing E, leave onto a landing, and jump off the platform.
 
-Players are capsules. The movement controls and tuning come from the Mammoth game; this repository has no Mammoth runtime, asset, or authentication dependencies. Jumping inside the cab is an intentional extension to Mammoth's current controls.
+Players are capsules. The first-person mouse-look implementation is copied from Mammoth's production controller: native pointer lock, unrestricted yaw, immediate camera rotation, the same sensitivity/pitch/coast, and Alt free-look/recentering. Movement follows the body/camera heading. This repository has no Mammoth runtime, asset, or authentication dependencies. Jumping inside the cab is an intentional extension to Mammoth's current controls.
 
 Three.js `WebGPURenderer` uses native WebGPU when available and its WebGL2 fallback otherwise. The HUD displays the active backend. Use `?backend=webgl` to exercise the fallback, or `?debug=1` to show collision wireframes.
 
@@ -40,7 +40,7 @@ The CLI wrapper also checks the usual Windows installation directory. If your CL
 ## Try two players
 
 1. Open the game in two browser tabs. Each tab connects as an anonymous guest, with its own token stored in `sessionStorage`. If **Duplicate tab** copies the first token, the client detects the occupied identity and obtains a separate guest token.
-2. Click **Enter** to capture the mouse. Move the mouse to look, aim the center reticle at a numbered button on the back wall, and press **E**. A gold reticle and highlighted control show the current interaction target. Embedded browsers that reject pointer lock also follow mouse movement without dragging; their movement is limited by the viewport.
+2. Click **Enter** to capture the mouse. Move it freely to turn in either direction, aim the center reticle at a numbered button, and **click or press E**. The first click captures the mouse; subsequent clicks interact. A gold reticle and highlighted control show the target. If an embedded preview blocks capture, the game stays paused and offers a desktop-browser link and URL copy button. Open the URL in Chrome, Edge, or Firefox for native mouse capture.
 3. Ride together, or leave one player on a platform and call the elevator from that landing. Both players see the same cab, queue, and gates.
 4. Open the landing gate with **E** when the cab is docked, then walk out. Jump off a platform to fall to the ground plaza, or press **R** to respawn.
 5. Reload a tab to reconnect with that tab's identity. Stop and restart the database using the same `.spacetime-data/` directory to inspect persistence.
@@ -57,9 +57,8 @@ The instance allows **two connected players**. A third guest remains in the lobb
 | Space | Jump; hold for the full jump height |
 | Mouse | Look |
 | Hold Alt + mouse | Free look while keeping movement heading |
-| Left click | Capture or resume mouse-look |
-| E | Select the aimed floor/call/door button, or toggle the nearby landing gate |
-| V | Toggle third-person view |
+| Left click | Capture/resume the mouse; while captured, operate the aimed control |
+| E | Operate the aimed floor, call, cabin-door or landing-gate control |
 | R | Respawn |
 | Escape | Pause movement and release mouse |
 
@@ -69,7 +68,7 @@ The 20 floors are numbered **1–20**, spaced 4 meters apart. Floor 1 and the ca
 
 There are three database tables: players, the shared elevator, and the scheduled simulation tick. Clients send movement input and interaction requests through reducers. They never submit authoritative positions or advance the elevator themselves.
 
-`shared/simulation.ts` contains the pure movement, collision, elevator, and rider-support rules used by both server simulation and client prediction. The server persists state; clients predict their own movement and render replicated players and elevator motion smoothly. A server restart skips the elapsed outage instead of simulating a large backlog of physics steps.
+`shared/simulation.ts` contains the pure movement, collision, elevator, and rider-support rules used by both server simulation and client prediction. The server persists state; clients predict their own movement and render replicated players and elevator motion smoothly. `src/motion.ts` presents motion on a buffered server timeline and places riders/cameras in the rendered cab's exact moving frame. Repeated input/queue updates do not restart the trajectory. A server restart skips the elapsed outage instead of simulating a large backlog of physics steps.
 
 This is a deliberately small, trusted anonymous demo. SpacetimeDB supplies connection identities without an account login. The module bounds inputs, limits player slots, and guards its scheduled tick; it does not demonstrate account authentication, access permissions, or a production anti-cheat system.
 

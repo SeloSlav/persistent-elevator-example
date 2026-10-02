@@ -33,11 +33,13 @@ All clients subscribe to the same state. When either player presses a floor butt
 
 The cab advances before player movement. A rider supported by the cab follows its change in height, while retaining movement across the cab floor. Support tests use horizontal bounds and vertical proximity, so a player on a landing above the cab does not attach to the cab below. The doorway bridges cab and landing support while docked. Closed doors and gates constrain passage.
 
-The local client predicts movement from the same inputs it submits to the server and reconciles with authoritative snapshots. Remote capsules use replicated state for presentation. Elevator rendering evaluates its motion between updates; its floor, its doors, and its riders use the same evaluated cab height. Render frame rate does not determine shared elevator progress.
+The local client predicts movement from the same inputs it submits to the server and reconciles with authoritative snapshots. Remote capsules use replicated state for presentation. Elevator rendering buffers 100 milliseconds of server-timestamped samples, interpolates with bounded cubic tangents, and extrapolates at most 100 milliseconds. Duplicate-timestamp input/queue updates replace metadata without restarting the presentation clock. An ascending or descending journey never corrects backwards when a late packet arrives.
 
-The example keeps Mammoth's WASD, Shift sprint, C crouch toggle, Space jump, Alt free look, mouse look, and V camera controls. E operates the aimed floor, call, and door controls, and the nearby landing gate. Speeds are 5 m/s walking, 7.5 m/s sprinting, and 2.8 m/s crouching. Gravity is 21.5 m/s², with a 5.7 m/s jump impulse. Pill bodies have a .22 m radius and standing/crouched heights of 1.78/1.2 m. Jumping inside the cab is allowed here as an intentional extension to Mammoth.
+Prediction and presentation have separate elevator states. Grounded riders and the first-person camera use the rendered cabin height on every render frame, even between physics ticks; jumping riders retain their predicted height relative to the simulation cab. Horizontal movement stays immediate. The cab, doors, grounded remote riders and camera therefore share one moving frame. Render frame rate does not determine shared elevator progress.
 
-Mouse movement turns the camera without holding a button. Native pointer lock allows continuous rotation; the embedded-browser fallback follows movement within the viewport. Third-person orbit uses both pitch and yaw, constrained to the cab while inside it. Escape, focus loss, and a hidden document clear held movement and submit neutral input immediately. Interaction raycasts use the center reticle and respect opaque surfaces.
+The example keeps Mammoth's WASD, Shift sprint, C crouch toggle, Space jump, Alt free look, and first-person mouse look. Locked left-click and E operate the aimed floor, call, and door controls. Speeds are 5 m/s walking, 7.5 m/s sprinting, and 2.8 m/s crouching. Gravity is 21.5 m/s², with a 5.7 m/s jump impulse. Pill bodies have a .22 m radius and standing/crouched heights of 1.78/1.2 m. Jumping inside the cab is allowed here as an intentional extension to Mammoth.
+
+`src/fp-look.ts` copies Mammoth's pure production look calculations. Native pointer-lock deltas update camera rotation immediately, with the same .0022 radians-per-pixel sensitivity, 1.53-radian pitch limit, light post-flick coast and Alt recenter. Horizontal turning is unlimited and drives the same heading submitted for movement. Alt alone temporarily separates head yaw from body yaw. There is no third-person orbit or viewport-limited substitute. Capture failure remains paused. Escape, focus loss, and a hidden document clear transient movement and submit neutral input. A delayed capture request cannot resume paused play. Click and E refresh the center ray and respect opaque surfaces; decorative geometry is only tested for occlusion when interacting.
 
 ## Anonymous players and reconnects
 
@@ -45,7 +47,7 @@ There is no account signup or login. The SDK obtains an anonymous connection ide
 
 Only two guests can be connected at once. A third guest waits in the lobby and can retry. Disconnecting marks a player offline instead of immediately erasing its state. A new guest can replace an offline guest row to keep the example limited to two player slots. The original tab can restore its state only while its row and token still exist; this is not permanent account-backed identity.
 
-Inputs expire after 300 ms without a packet. A separate 100 ms heartbeat runs independently of rendering. An abandoned seat expires after 10 seconds without input. Door safety considers online capsules only, so a retained offline pose cannot obstruct the elevator indefinitely.
+Inputs expire after 300 ms without a packet. A separate 50 ms heartbeat runs independently of rendering. An abandoned seat expires after 10 seconds without input. Door safety considers online capsules only, so a retained offline pose cannot obstruct the elevator indefinitely.
 
 ## What persists
 

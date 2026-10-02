@@ -20,7 +20,7 @@ function hash(x: number, y: number) {
 }
 
 function surfaceField(kind: 'brushed' | 'concrete' | 'rubber') {
-  const size = 256;
+  const size = 512;
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
   const context = canvas.getContext('2d')!;
@@ -37,9 +37,9 @@ function surfaceField(kind: 'brushed' | 'concrete' | 'rubber') {
         roughness = 0.3 + stroke * 0.6;
         shade = 0.42 + stroke * 0.13;
       } else if (kind === 'rubber') {
-        const dx = ((x + 16) % 32) - 16;
-        const dy = ((y + 16) % 32) - 16;
-        const coin = Math.max(0, Math.min(1, (8.5 - Math.hypot(dx, dy)) / 2));
+        const dx = ((x + 32) % 64) - 32;
+        const dy = ((y + 32) % 64) - 32;
+        const coin = Math.max(0, Math.min(1, (17 - Math.hypot(dx, dy)) / 4));
         height = 0.18 + coin * 0.47 + (fine - 0.5) * 0.06;
         roughness = 0.86 - coin * 0.15 + fine * 0.055;
         shade = 0.5 + coin * 0.12 + (fine - 0.5) * 0.06;
@@ -96,12 +96,14 @@ export function createSurfaceMaterials() {
   return {
     steel: new MeshStandardMaterial({ color: 0x33434c, metalness: 0.72, roughness: 0.48 }),
     dark: new MeshStandardMaterial({ color: 0x1c282d, metalness: 0.18, roughness: 0.68 }),
-    aluminium: texturedMaterial('brushed', 0xc0c8c8, 0.88, 0.28, 0.46, 0.065),
-    enamel: new MeshPhysicalMaterial({ color: 0xd8c9ab, metalness: 0.08, roughness: 0.43, clearcoat: 0.22, clearcoatRoughness: 0.38 }),
+    // Bump scale is measured in metres. Millimetre relief prevents a polished
+    // metal surface or rubber mat from behaving like centimetre-scale terrain.
+    aluminium: texturedMaterial('brushed', 0xc0c8c8, 0.88, 0.28, 0.46, 0.0015),
+    enamel: new MeshPhysicalMaterial({ color: 0xd8c9ab, metalness: 0.03, roughness: 0.33, clearcoat: 0.35, clearcoatRoughness: 0.28 }),
     ochre: new MeshPhysicalMaterial({ color: 0xb68d53, metalness: 0.08, roughness: 0.46, clearcoat: 0.18, clearcoatRoughness: 0.44 }),
     cream: new MeshStandardMaterial({ color: 0xf0e6d1, metalness: 0.02, roughness: 0.78 }),
-    concrete: texturedMaterial('concrete', 0x8b9699, 0, 0.78, 0.96, 0.055),
-    rubber: texturedMaterial('rubber', 0x364443, 0, 0.72, 0.94, 0.18),
+    concrete: texturedMaterial('concrete', 0x8b9699, 0, 0.78, 0.96, 0.004),
+    rubber: texturedMaterial('rubber', 0x364443, 0, 0.72, 0.94, 0.003),
   };
 }
 

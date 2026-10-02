@@ -3,6 +3,7 @@ import {
   CanvasTexture,
   CapsuleGeometry,
   CylinderGeometry,
+  LatheGeometry,
   DirectionalLight,
   FogExp2,
   Group,
@@ -21,7 +22,10 @@ import {
   SpotLight,
   SRGBColorSpace,
   Vector3,
+  Vector2,
 } from 'three/webgpu';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createDuskEnvironment, createSurfaceMaterials, setSurfaceMaterialDebug, type SurfaceDebugMode } from './materials';
 
 export interface ElevatorVisualState {
@@ -84,7 +88,7 @@ export function createWorld(scene: Scene) {
   scene.background = environment.texture;
   scene.backgroundBlurriness = 0.05;
   scene.environment = environment.texture;
-  scene.environmentIntensity = 0.6;
+  scene.environmentIntensity = 0.48;
   scene.fog = new FogExp2(environment.fog, 0.004);
 
   const { steel, dark, aluminium, ochre, enamel, cream, concrete, rubber } = createSurfaceMaterials();
@@ -99,15 +103,27 @@ export function createWorld(scene: Scene) {
   const lightPanel = new MeshStandardMaterial({
     color: 0xffe3ae,
     emissive: 0xffd59d,
-    emissiveIntensity: 2.3,
+    emissiveIntensity: 1.8,
     roughness: 0.7,
   });
   const boxGeometry = new BoxGeometry(1, 1, 1);
   const planeGeometry = new PlaneGeometry(1, 1);
-  const buttonGeometry = new CylinderGeometry(0.104, 0.104, 0.055, 48);
+  // The button and bezel are separate turned profiles, with a real annular
+  // opening and bevels. Their depth contract is shared by the call stations.
+  const buttonGeometry = new LatheGeometry([
+    new Vector2(0, 0), new Vector2(0.09, 0), new Vector2(0.1, 0.007),
+    new Vector2(0.102, 0.026), new Vector2(0.096, 0.039),
+    new Vector2(0.088, 0.044), new Vector2(0, 0.044),
+  ], 48);
   buttonGeometry.rotateX(Math.PI / 2);
-  const rimGeometry = new CylinderGeometry(0.13, 0.13, 0.052, 48);
+  const rimGeometry = new LatheGeometry([
+    new Vector2(0.106, 0), new Vector2(0.125, 0),
+    new Vector2(0.135, 0.008), new Vector2(0.135, 0.024),
+    new Vector2(0.128, 0.034), new Vector2(0.106, 0.034),
+    new Vector2(0.106, 0),
+  ], 48);
   rimGeometry.rotateX(Math.PI / 2);
+  const roundedGeometry = new Map<string, RoundedBoxGeometry>();
 
   function box(parent: Object3D, mat: Material, x: number, y: number, z: number, w: number, h: number, d: number) {
     const mesh = new Mesh(boxGeometry, mat);
@@ -117,6 +133,54 @@ export function createWorld(scene: Scene) {
     mesh.receiveShadow = true;
     parent.add(mesh);
     return mesh;
+  }
+
+  function fittedBox(parent: Object3D, mat: Material, x: number, y: number, z: number, w: number, h: number, d: number, radius = 0.012) {
+    // Repeated tower fittings use one bevel subdivision; the close interior
+    // receives two. Smooth normals retain the edge highlight at either tier.
+    const segments = parent === world || parent.name.startsWith('Landing ') ? 1 : 2;
+    const key = [w, h, d, radius, segments].join('/');
+    let geometry = roundedGeometry.get(key);
+    if (!geometry) {
+      geometry = new RoundedBoxGeometry(w, h, d, segments, radius);
+      roundedGeometry.set(key, geometry);
+    }
+    const mesh = new Mesh(geometry, mat);
+    mesh.position.set(x, y, z);
+    mesh.receiveShadow = true;
+    mesh.userData.decoration = true;
+    parent.add(mesh);
+    return mesh;
+  }
+
+  // Noninteractive fittings with the same material compile into one mesh.
+  // Moving leaves and clickable controls retain their own object identity.
+  function compileFittings(parent: Object3D) {
+    const bundles = new Map<string, Mesh[]>();
+    for (const child of [...parent.children]) {
+      if (!(child instanceof Mesh) || !child.userData.decoration || child.userData.action || Array.isArray(child.material)) continue;
+      const key = `${child.material.uuid}/${child.castShadow}/${child.receiveShadow}`;
+      const bundle = bundles.get(key) ?? [];
+      bundle.push(child);
+      bundles.set(key, bundle);
+    }
+    for (const meshes of bundles.values()) {
+      if (meshes.length < 2) continue;
+      const parts = meshes.map(mesh => {
+        mesh.updateMatrix();
+        const part = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
+        return part.applyMatrix4(mesh.matrix);
+      });
+      const geometry = mergeGeometries(parts);
+      for (const part of parts) part.dispose();
+      if (!geometry) continue;
+      const compiled = new Mesh(geometry, meshes[0].material);
+      compiled.name = 'Batched machined fittings';
+      compiled.castShadow = meshes[0].castShadow;
+      compiled.receiveShadow = meshes[0].receiveShadow;
+      parent.add(compiled);
+      for (const mesh of meshes) parent.remove(mesh);
+    }
   }
 
   function textTexture(text: string, options: { width?: number; height?: number; fontSize?: number; color?: string; background?: string } = {}) {
@@ -129,7 +193,7 @@ export function createWorld(scene: Scene) {
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
     ctx.fillStyle = options.color ?? '#efe5cd';
-    ctx.font = `600 ${options.fontSize ?? 64}px "Courier New", monospace`;
+    ctx.font = `600 ${options.fontSize ?? 64}px "Segoe UI", Arial, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 2);
@@ -141,7 +205,7 @@ export function createWorld(scene: Scene) {
   }
 
   function label(parent: Object3D, text: string, x: number, y: number, z: number, w: number, h: number, options: Parameters<typeof textTexture>[1] = {}) {
-    const mat = new MeshBasicMaterial({ map: textTexture(text, options), transparent: !options?.background, depthWrite: !!options?.background, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+    const mat = new MeshBasicMaterial({ map: textTexture(text, options), transparent: !options?.background, depthWrite: !!options?.background });
     const mesh = new Mesh(planeGeometry, mat);
     mesh.position.set(x, y, z);
     mesh.scale.set(w, h, 1);
@@ -188,7 +252,8 @@ export function createWorld(scene: Scene) {
       const rise = FLOOR_HEIGHT;
       const length = Math.hypot(span, rise);
       for (const sign of [-1, 1]) {
-        structure.push({ position: new Vector3(0, y + rise / 2 - 0.25, -2.08), scale: new Vector3(0.075, length, 0.08), rotation: sign * Math.atan2(span, rise) });
+        // Cross braces occupy separate depth layers at their intersection.
+        structure.push({ position: new Vector3(0, y + rise / 2 - 0.25, -2.08 + (sign === 1 ? 0.055 : -0.055)), scale: new Vector3(0.075, length, 0.08), rotation: sign * Math.atan2(span, rise) });
       }
     }
   }
@@ -206,7 +271,6 @@ export function createWorld(scene: Scene) {
   const fixtureParts: Array<{ position: Vector3; scale: Vector3 }> = [];
   const fixtureLights: Array<{ position: Vector3; scale: Vector3 }> = [];
   const platformBraces: Array<{ position: Vector3; scale: Vector3; rotation?: number }> = [];
-  const hazardParts: Array<{ position: Vector3; scale: Vector3 }> = [];
   const hazardCanvas = document.createElement('canvas');
   hazardCanvas.width = 256; hazardCanvas.height = 32;
   const hazardContext = hazardCanvas.getContext('2d')!;
@@ -219,7 +283,19 @@ export function createWorld(scene: Scene) {
     hazardContext.closePath(); hazardContext.fill();
   }
   const hazardMap = new CanvasTexture(hazardCanvas); hazardMap.colorSpace = SRGBColorSpace;
-  const hazardMaterial = new MeshStandardMaterial({ map: hazardMap, color: 0xe2d5b0, metalness: 0, roughness: 0.84, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+  const hazardMaterial = new MeshStandardMaterial({ map: hazardMap, color: 0xe2d5b0, metalness: 0, roughness: 0.84 });
+  const hazardGeometry = new PlaneGeometry(1, 1);
+  // Paint belongs to one top-facing sheet. Boxes printed the same graphic on
+  // every cap, and intersecting corner strips produced coincident top faces.
+  function hazardStripe(x: number, y: number, z: number, w: number, d: number) {
+    const mesh = new Mesh(hazardGeometry, hazardMaterial);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(x, y + 0.009, z);
+    mesh.scale.set(w, d, 1);
+    mesh.receiveShadow = false;
+    mesh.userData.decoration = true;
+    world.add(mesh);
+  }
   for (let floor = 1; floor <= FLOORS; floor++) {
     const y = (floor - 1) * FLOOR_HEIGHT;
     platformParts.push({ position: new Vector3(0, y - 0.11, 1.8 + PLATFORM_DEPTH / 2), scale: new Vector3(7.6, 0.22, PLATFORM_DEPTH) });
@@ -229,15 +305,20 @@ export function createWorld(scene: Scene) {
       edgeParts.push({ position: new Vector3(side * 3.824, y - 0.115, 4.8), scale: new Vector3(0.035, 0.16, 6) });
       // Under-slab cantilevers add a structural silhouette without obstructing play.
       platformBraces.push({ position: new Vector3(side * 2.85, y - 0.41, 4.8), scale: new Vector3(0.09, 0.25, 5.8) });
-      fixtureParts.push({ position: new Vector3(side * 0.95, y + 2.87, 2.067), scale: new Vector3(0.16, 0.055, 0.08) });
-      fixtureLights.push({ position: new Vector3(side * 0.95, y + 2.87, 2.113), scale: new Vector3(0.11, 0.021, 0.012) });
-      hazardParts.push({ position: new Vector3(side * 3.47, y + 0.003, 4.8), scale: new Vector3(0.16, 0.004, 5.72) });
+      fixtureParts.push({ position: new Vector3(side * 0.95, y + 2.815, 2.067), scale: new Vector3(0.16, 0.055, 0.08) });
+      fixtureLights.push({ position: new Vector3(side * 0.95, y + 2.815, 2.113), scale: new Vector3(0.11, 0.021, 0.012) });
+      hazardStripe(side * 3.47, y, 4.65, 0.16, 5.38);
     }
-    hazardParts.push({ position: new Vector3(0, y + 0.003, 7.49), scale: new Vector3(7.04, 0.004, 0.18) });
+    // End strip stops short of each side stripe; corners never overlap.
+    hazardStripe(0, y, 7.49, 6.72, 0.18);
     // The gate frame ends at the doorway; the rest of every platform is open.
-    box(world, steel, -0.925, y + 1.38, 1.96, 0.15, 2.76, 0.2).castShadow = true;
-    box(world, steel, 0.925, y + 1.38, 1.96, 0.15, 2.76, 0.2).castShadow = true;
-    box(world, steel, 0, y + 2.69, 1.96, 2, 0.15, 0.2).castShadow = true;
+    // Posts end at the underside of the lintel, avoiding stacked top caps.
+    for (const side of [-1, 1]) {
+      fittedBox(world, steel, side * 0.925, y + 1.315, 1.96, 0.15, 2.63, 0.2, 0.014).castShadow = true;
+      fittedBox(world, aluminium, side * 0.925, y + 0.065, 1.96, 0.195, 0.11, 0.245, 0.012);
+    }
+    fittedBox(world, steel, 0, y + 2.715, 1.96, 2.06, 0.15, 0.22, 0.018).castShadow = true;
+    fittedBox(world, aluminium, 0, y + 2.815, 1.975, 2.16, 0.035, 0.255, 0.008);
 
     const pivot = new Group();
     pivot.position.set(-DOOR_HALF, y, 1.97);
@@ -260,106 +341,172 @@ export function createWorld(scene: Scene) {
       box(pivot, ochre, (b + leafWidth) / 2, (windowBottom + windowTop) / 2, 0, leafWidth - b, 0.94, 0.075),
     ]) { part.castShadow = true; interactive(part, action); }
     const reveal = [
-      box(pivot, aluminium, a - 0.011, 1.67, 0.043, 0.022, 0.98, 0.024),
-      box(pivot, aluminium, b + 0.011, 1.67, 0.043, 0.022, 0.98, 0.024),
-      box(pivot, aluminium, windowX, windowBottom - 0.011, 0.043, 0.23, 0.022, 0.024),
-      box(pivot, aluminium, windowX, windowTop + 0.011, 0.043, 0.23, 0.022, 0.024),
+      fittedBox(pivot, aluminium, a - 0.016, 1.67, 0.052, 0.028, 0.94, 0.023, 0.004),
+      fittedBox(pivot, aluminium, b + 0.016, 1.67, 0.052, 0.028, 0.94, 0.023, 0.004),
+      fittedBox(pivot, aluminium, windowX, windowBottom - 0.023, 0.052, 0.25, 0.032, 0.023, 0.004),
+      fittedBox(pivot, aluminium, windowX, windowTop + 0.023, 0.052, 0.25, 0.032, 0.023, 0.004),
       box(pivot, windowGlass, windowX, 1.67, 0.005, windowWidth, 0.94, 0.009),
     ];
     for (const mesh of reveal) interactive(mesh, action);
-    box(pivot, dark, windowX, 1.06, 0.047, 0.24, 0.12, 0.012);
+    fittedBox(pivot, dark, windowX, 1.06, 0.052, 0.24, 0.12, 0.02, 0.006);
     for (const handle of [
       box(pivot, aluminium, 1.38, 1.08, 0.145, 0.035, 0.3, 0.034),
       box(pivot, aluminium, 1.38, 1.22, 0.097, 0.035, 0.026, 0.12),
       box(pivot, aluminium, 1.38, 0.94, 0.097, 0.035, 0.026, 0.12),
     ]) interactive(handle, action);
+    // A protected hinge and kick plate give each leaf a readable construction.
+    for (const hingeY of [0.38, 2.28]) fittedBox(pivot, aluminium, 0.055, hingeY, 0.054, 0.055, 0.15, 0.024, 0.008);
+    const kick = fittedBox(pivot, aluminium, leafWidth / 2, 0.17, 0.052, leafWidth - 0.12, 0.22, 0.02, 0.006);
+    interactive(kick, action);
     // Only floor numbers and the call face emit light.
-    box(world, dark, 1.28, y + 1.69, 1.98, 0.36, 0.48, 0.09);
-    label(world, String(floor).padStart(2, '0'), 1.28, y + 1.76, 2.038, 0.29, 0.22, { fontSize: 76 });
+    fittedBox(world, steel, 1.28, y + 1.28, 1.93, 0.085, 2.56, 0.085, 0.01);
+    fittedBox(world, aluminium, 1.28, y + 1.695, 1.996, 0.40, 0.66, 0.078, 0.018);
+    fittedBox(world, dark, 1.28, y + 1.695, 2.041, 0.35, 0.60, 0.018, 0.009);
+    label(world, String(floor).padStart(2, '0'), 1.28, y + 1.80, 2.061, 0.27, 0.15, { fontSize: 76 });
     const callMat = new MeshStandardMaterial({ color: colors.dark, emissive: colors.amber, emissiveIntensity: 0.025, roughness: 0.5, metalness: 0.3 });
     callLights.push(callMat);
     const call = new Mesh(buttonGeometry, callMat);
     call.scale.setScalar(0.75);
-    call.position.set(1.28, y + 1.52, 2.065);
+    call.position.set(1.28, y + 1.52, 2.061);
+    call.userData.targetOffsetZ = 0.041;
     world.add(call);
     interactive(call, { type: 'hail', floor });
     callButtons.push(call);
+    const callRim = new Mesh(rimGeometry, aluminium);
+    callRim.scale.setScalar(0.75);
+    callRim.position.set(1.28, y + 1.52, 2.056);
+    world.add(callRim);
+    interactive(callRim, { type: 'hail', floor });
     // Larger clean wayfinding is visible across the exposed platform.
-    box(world, dark, -1.46, y + 2.17, 1.98, 0.78, 0.57, 0.055);
-    label(world, `${String(floor).padStart(2, '0')}`, -1.46, y + 2.2, 2.013, 0.64, 0.39, { fontSize: 86 });
+    fittedBox(world, steel, -1.16, y + 2.22, 1.94, 0.50, 0.055, 0.065, 0.006);
+    fittedBox(world, aluminium, -1.46, y + 2.17, 1.986, 0.84, 0.65, 0.065, 0.018);
+    fittedBox(world, dark, -1.46, y + 2.17, 2.027, 0.77, 0.58, 0.014, 0.007);
+    label(world, `${String(floor).padStart(2, '0')}`, -1.46, y + 2.23, 2.046, 0.64, 0.35, { fontSize: 86 });
+    label(world, 'LANDING', -1.46, y + 1.97, 2.046, 0.61, 0.07, { width: 256, height: 64, fontSize: 36 });
+    compileFittings(pivot);
   }
   batchBoxes(world, platformParts, concrete).castShadow = true;
   batchBoxes(world, edgeParts, ochre);
   batchBoxes(world, platformBraces, steel);
   batchBoxes(world, fixtureParts, dark);
   batchBoxes(world, fixtureLights, lightPanel);
-  batchBoxes(world, hazardParts, hazardMaterial);
 
   const cab = new Group();
   cab.name = 'Persistent elevator cab';
   world.add(cab);
-  // Subfloor ends 3 cm below the finish; there is one surface at physics y=0.
+  // The finish owns the one walking plane at physics y=0. Its metal border
+  // occupies separate rectangles rather than overlaying the rubber surface.
   box(cab, dark, 0, -0.075, 0, 3.6, 0.09, 3.6).castShadow = true;
-  box(cab, rubber, 0, -0.015, -0.015, 3.6, 0.03, 3.57);
-  box(cab, enamel, 0, 1.5, -1.86, 3.6, 3, 0.12).castShadow = true;
-  box(cab, enamel, -1.86, 1.5, 0, 0.12, 3, 3.6).castShadow = true;
-  box(cab, enamel, 1.86, 1.5, 0, 0.12, 3, 3.6).castShadow = true;
+  box(cab, rubber, 0, -0.015, 0, 3.376, 0.03, 3.376);
+  box(cab, aluminium, 0, -0.015, -1.745, 3.6, 0.03, 0.11);
+  box(cab, aluminium, 0, -0.015, 1.745, 3.6, 0.03, 0.11);
+  for (const side of [-1, 1]) box(cab, aluminium, side * 1.745, -0.015, 0, 0.11, 0.03, 3.376);
+  box(cab, dark, 0, 1.5, -1.86, 3.6, 3, 0.12).castShadow = true;
+  box(cab, dark, -1.86, 1.5, 0, 0.12, 3, 3.6).castShadow = true;
+  box(cab, dark, 1.86, 1.5, 0, 0.12, 3, 3.6).castShadow = true;
   box(cab, dark, 0, 3.06, 0, 3.6, 0.12, 3.6).castShadow = true;
-  // Threshold occupies the final 3 cm, meeting the rubber edge at z=1.77.
-  box(cab, aluminium, 0, -0.015, 1.785, 1.7, 0.03, 0.03);
-  box(cab, dark, 0, 0.13, -1.778, 3.57, 0.2, 0.025);
+  // Each wall bay has a shadow reveal and an individually formed enamel panel.
+  // Decorative surfaces stay within 4 cm of the original wall bounds.
   for (const side of [-1, 1]) {
-    box(cab, dark, side * 1.778, 0.13, 0, 0.025, 0.2, 3.55);
-    box(cab, aluminium, side * 1.784, 2.52, 0, 0.014, 0.022, 3.5);
-    box(cab, aluminium, side * 1.784, 1.53, -1.71, 0.015, 2.35, 0.04);
+    for (const z of [-1.15, 0, 1.15]) {
+      fittedBox(cab, enamel, side * 1.780, 1.515, z, 0.031, 2.39, 1.065, 0.012);
+      fittedBox(cab, aluminium, side * 1.754, 0.58, z, 0.018, 0.36, 0.94, 0.008);
+    }
+    fittedBox(cab, aluminium, side * 1.778, 0.17, 0, 0.03, 0.23, 3.53, 0.01);
+    fittedBox(cab, aluminium, side * 1.776, 2.79, 0, 0.031, 0.055, 3.53, 0.01);
+    fittedBox(cab, aluminium, side * 1.778, 1.54, -1.768, 0.033, 2.43, 0.031, 0.009);
+    fittedBox(cab, enamel, side * 1.282, 1.515, -1.780, 0.87, 2.39, 0.031, 0.012);
   }
-  box(cab, aluminium, 0, 2.52, -1.784, 3.52, 0.022, 0.014);
+  fittedBox(cab, aluminium, 0, 0.17, -1.778, 3.53, 0.23, 0.03, 0.01);
+  fittedBox(cab, aluminium, 0, 2.79, -1.776, 3.53, 0.055, 0.031, 0.01);
+  // Circular handrails with stand-offs. Rear ends remain clear of the panel.
+  function handrail(x: number, y: number, z: number, length: number, alongX = false) {
+    const mesh = new Mesh(new CapsuleGeometry(0.027, length - 0.054, 4, 16), aluminium);
+    if (alongX) mesh.rotation.z = Math.PI / 2;
+    else mesh.rotation.x = Math.PI / 2;
+    mesh.position.set(x, y, z);
+    mesh.userData.decoration = true;
+    mesh.receiveShadow = true;
+    cab.add(mesh);
+  }
+  for (const side of [-1, 1]) {
+    handrail(side * 1.66, 1.02, -0.03, 2.95);
+    handrail(side * 1.30, 1.02, -1.66, 0.72, true);
+    for (const z of [-1.24, 1.18]) fittedBox(cab, aluminium, side * 1.726, 1.02, z, 0.102, 0.04, 0.07, 0.012);
+    fittedBox(cab, aluminium, side * 1.39, 1.02, -1.726, 0.07, 0.04, 0.102, 0.012);
+  }
   // The front side pockets leave exactly the collision model's 1.7 m opening.
   for (const side of [-1, 1]) {
-    box(cab, ochre, side * (CAB_HALF + DOOR_HALF) / 2, 1.5, 1.86, CAB_HALF - DOOR_HALF, 3, 0.12).castShadow = true;
-    box(cab, aluminium, side * 0.884, 1.33, 1.9275, 0.05, 2.66, 0.015);
-    box(cab, aluminium, side * 1.688, 1.02, -0.05, 0.055, 0.055, 2.96);
+    // A true pocket: the inner cover ends at z=1.816, the outside cover
+    // starts at z=1.906. Retracting leaves fit between them and disappear
+    // behind the cover from either side of the cab.
+    box(cab, ochre, side * (CAB_HALF + DOOR_HALF) / 2, 1.5, 1.808, CAB_HALF - DOOR_HALF, 3, 0.016).castShadow = true;
+    box(cab, ochre, side * (CAB_HALF + DOOR_HALF) / 2, 1.5, 1.918, CAB_HALF - DOOR_HALF, 3, 0.024).castShadow = true;
+    // Jambs finish at the header rather than overlapping its end caps.
+    fittedBox(cab, aluminium, side * 0.889, 1.32, 1.934, 0.058, 2.64, 0.023, 0.008);
+    fittedBox(cab, aluminium, side * 1.326, 1.46, 1.785, 0.74, 2.68, 0.018, 0.007);
   }
   box(cab, ochre, 0, 2.825, 1.86, 1.7, 0.35, 0.12).castShadow = true;
-  for (const x of [-1.23, 1.23]) box(cab, aluminium, x, 1.02, -1.664, 0.89, 0.055, 0.055);
-  box(cab, aluminium, 0, 2.653, 1.9275, 1.83, 0.045, 0.015);
+  fittedBox(cab, aluminium, 0, 2.679, 1.934, 1.836, 0.058, 0.023, 0.008);
   const cabDoorParts: Group[] = [];
   for (const side of [-1, 1]) {
     const door = new Group();
     door.position.x = side * DOOR_HALF / 2;
     cab.add(door);
     cabDoorParts.push(door);
-    // Leaves travel behind the pockets, rather than sharing their planar faces.
-    box(door, aluminium, 0, 1.31, 1.75, DOOR_HALF - 0.013, 2.62, 0.06).castShadow = true;
-    box(door, dark, side * 0.32, 1.32, 1.786, 0.018, 2.55, 0.008);
-    // Horizontal pressed-metal seams make door movement readable.
-    for (const height of [0.34, 2.31]) box(door, steel, 0, height, 1.786, DOOR_HALF - 0.04, 0.013, 0.008);
+    // Decorated faces lie in [1.819, 1.897], with 3/9 mm cavity clearances.
+    // Seams are gaps between formed panels; no crossed strip faces remain.
+    fittedBox(door, steel, 0, 1.31, 1.858, DOOR_HALF - 0.013, 2.62, 0.042, 0.007).castShadow = true;
+    for (const depth of [1.826, 1.890]) {
+      for (const [height, span] of [[0.32, 0.48], [1.42, 1.58], [2.415, 0.30]]) {
+        fittedBox(door, aluminium, 0, height, depth, 0.742, span, 0.014, 0.005);
+      }
+    }
+    compileFittings(door);
   }
-  for (const x of [-0.98, 0.98]) {
-    box(cab, dark, x, 2.867, 0, 0.67, 0.06, 1.96);
-    box(cab, lightPanel, x, 2.828, 0, 0.55, 0.02, 1.78);
+  // Complete recessed luminaire: formed frame, diffuser, perimeter coffer and
+  // separate vent slots. Every underside occupies its own height layer.
+  fittedBox(cab, cream, 0, 2.969, 0, 3.52, 0.036, 3.52, 0.01);
+  fittedBox(cab, aluminium, 0, 2.93, -0.10, 2.91, 0.068, 2.25, 0.025);
+  fittedBox(cab, lightPanel, 0, 2.878, -0.10, 2.68, 0.024, 1.98, 0.011);
+  const ceilingLouvers: Array<{ position: Vector3; scale: Vector3 }> = [];
+  for (const z of [-1.49, 1.40]) {
+    fittedBox(cab, steel, 0, 2.902, z, 2.55, 0.025, 0.23, 0.01);
+    for (let x = -1.11; x <= 1.12; x += 0.085) ceilingLouvers.push({ position: new Vector3(x, 2.88, z), scale: new Vector3(0.026, 0.012, 0.16) });
   }
-  const cabLight = new PointLight(0xffddaf, 12, 5.5, 2);
-  cabLight.position.set(0, 2.61, -0.8);
+  batchBoxes(cab, ceilingLouvers, aluminium).receiveShadow = false;
+  const cabLight = new PointLight(0xffddaf, 7.5, 5.5, 2);
+  cabLight.position.set(0, 2.60, -0.95);
   cab.add(cabLight);
-  const cabSpot = new SpotLight(0xffe1b5, 27, 7, 0.98, 0.8, 2);
+  const cabSpot = new SpotLight(0xffe1b5, 21, 6, 0.92, 0.72, 2);
   cabSpot.position.set(0, 2.73, 0.5);
   cabSpot.target.position.set(0, 0.1, -0.25);
   cabSpot.castShadow = true;
   cabSpot.shadow.mapSize.set(1024, 1024);
-  cabSpot.shadow.bias = -0.00015;
-  cabSpot.shadow.normalBias = 0.008;
-  cabSpot.shadow.camera.near = 0.12;
-  cabSpot.shadow.camera.far = 7;
+  cabSpot.shadow.bias = -0.00008;
+  cabSpot.shadow.normalBias = 0.006;
+  cabSpot.shadow.camera.near = 0.16;
+  cabSpot.shadow.camera.far = 6;
   cab.add(cabSpot, cabSpot.target);
 
   // Back-wall controls stay in one direct glance from the entrance.
   const panel = new Group();
-  panel.position.set(0, 0, -1.706);
+  panel.position.set(0, 0, -1.736);
   cab.add(panel);
-  box(panel, aluminium, 0, 1.45, 0, 1.5, 1.91, 0.055);
-  box(panel, dark, 0, 1.44, 0.034, 1.41, 1.81, 0.02);
-  label(panel, 'SELECT FLOOR', 0, 2.21, 0.053, 1.24, 0.15, { width: 512, height: 64, fontSize: 44 });
+  fittedBox(panel, aluminium, 0, 1.5, 0.035, 1.65, 2.08, 0.07, 0.023);
+  fittedBox(panel, steel, 0, 1.5, 0.081, 1.56, 1.99, 0.014, 0.006);
+  fittedBox(panel, dark, 0, 1.5, 0.096, 1.48, 1.91, 0.016, 0.007);
+  label(panel, 'SELECT YOUR FLOOR', 0, 2.29, 0.115, 1.26, 0.115, { width: 768, height: 96, fontSize: 48 });
+  label(panel, 'SHARED / PERSISTENT', 0, 2.14, 0.115, 1.16, 0.065, { width: 768, height: 64, fontSize: 42, color: '#9daaa7' });
+  const fastener = new CylinderGeometry(0.023, 0.023, 0.012, 20);
+  fastener.rotateX(Math.PI / 2);
+  for (const x of [-0.699, 0.699]) for (const y of [0.63, 2.37]) {
+    const screw = new Mesh(fastener, aluminium);
+    screw.position.set(x, y, 0.12);
+    screw.userData.decoration = true;
+    screw.receiveShadow = true;
+    panel.add(screw);
+  }
   const buttonMaterials: MeshStandardMaterial[] = [];
   const buttonNumberMaterials: MeshBasicMaterial[] = [];
   const floorButtons: Mesh[] = [];
@@ -369,28 +516,31 @@ export function createWorld(scene: Scene) {
     const x = (column - 1.5) * 0.317;
     const y = 1.9 - row * 0.278;
     const rim = new Mesh(rimGeometry, aluminium);
-    rim.position.set(x, y, 0.056);
+    rim.position.set(x, y, 0.106);
     panel.add(rim);
     interactive(rim, { type: 'floor', floor });
     const buttonMat = new MeshStandardMaterial({ color: colors.dark, roughness: 0.62, metalness: 0.15, emissive: colors.amber, emissiveIntensity: 0.02 });
     buttonMaterials.push(buttonMat);
     const button = new Mesh(buttonGeometry, buttonMat);
-    button.position.set(x, y, 0.084);
+    button.position.set(x, y, 0.125);
+    button.userData.targetOffsetZ = 0.054;
     panel.add(button);
     interactive(button, { type: 'floor', floor });
     floorButtons.push(button);
-    const number = label(panel, String(floor), x, y, 0.115, 0.157, 0.157, { fontSize: floor > 9 ? 72 : 81 });
+    const number = label(panel, String(floor), x, y, 0.179, 0.144, 0.144, { fontSize: floor > 9 ? 72 : 81, color: '#ffffff' });
     buttonNumberMaterials.push(number.material);
     interactive(number, { type: 'floor', floor });
   }
   for (const [open, x, text] of [[true, -0.24, '◀ ▶'], [false, 0.24, '▶ ◀']] as const) {
-    const face = box(panel, dark, x, 0.575, 0.073, 0.35, 0.16, 0.065);
+    fittedBox(panel, aluminium, x, 0.575, 0.12, 0.38, 0.17, 0.025, 0.009);
+    const face = fittedBox(panel, dark, x, 0.575, 0.15, 0.337, 0.132, 0.018, 0.008);
     interactive(face, { type: 'door', open });
-    const symbol = label(panel, text, x, 0.575, 0.111, 0.29, 0.105, { width: 256, height: 64, fontSize: 42 });
+    const symbol = label(panel, text, x, 0.575, 0.175, 0.29, 0.095, { width: 256, height: 64, fontSize: 42 });
     interactive(symbol, { type: 'door', open });
   }
   // The floor indicator is deliberately readable without post-processing.
-  box(cab, dark, 0, 2.65, -1.697, 1.49, 0.27, 0.056);
+  fittedBox(cab, aluminium, 0, 2.715, -1.717, 1.65, 0.295, 0.078, 0.021);
+  fittedBox(cab, dark, 0, 2.715, -1.661, 1.50, 0.215, 0.014, 0.006);
   const displayCanvas = document.createElement('canvas');
   displayCanvas.width = 512;
   displayCanvas.height = 96;
@@ -398,10 +548,13 @@ export function createWorld(scene: Scene) {
   const displayTexture = new CanvasTexture(displayCanvas);
   displayTexture.colorSpace = SRGBColorSpace;
   const display = new Mesh(planeGeometry, new MeshBasicMaterial({ map: displayTexture }));
-  display.position.set(0, 2.65, -1.664);
-  display.scale.set(1.38, 0.21, 1);
+  display.position.set(0, 2.715, -1.642);
+  display.scale.set(1.42, 0.175, 1);
   cab.add(display);
-  label(cab, '20 FLOORS · TWO RIDERS', 0, 0.27, -1.71, 2.4, 0.13, { width: 768, height: 64, fontSize: 42 });
+  label(cab, '20 FLOORS · TWO RIDERS', 0, 0.345, -1.748, 1.40, 0.065, { width: 768, height: 64, fontSize: 42 });
+  compileFittings(panel);
+  compileFittings(cab);
+  compileFittings(world);
 
   // A real, slightly raised rim makes the control under the crosshair clear.
   const targetRing = new Mesh(new RingGeometry(0.11, 0.128, 40), new MeshBasicMaterial({ color: 0xffdb92, toneMapped: false }));
@@ -410,9 +563,9 @@ export function createWorld(scene: Scene) {
   targetRing.visible = false;
   world.add(targetRing);
 
-  const sky = new HemisphereLight(0xb7d4e4, 0x746557, 0.95);
+  const sky = new HemisphereLight(0xb7d4e4, 0x746557, 0.70);
   scene.add(sky);
-  const sun = new DirectionalLight(0xffddaf, 2.2);
+  const sun = new DirectionalLight(0xffddaf, 1.85);
   sun.position.set(-14, 35, 15);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
@@ -420,8 +573,8 @@ export function createWorld(scene: Scene) {
   sun.shadow.camera.right = sun.shadow.camera.top = 10;
   sun.shadow.camera.near = 0.5;
   sun.shadow.camera.far = 52;
-  sun.shadow.bias = -0.00015;
-  sun.shadow.normalBias = 0.012;
+  sun.shadow.bias = -0.00010;
+  sun.shadow.normalBias = 0.009;
   scene.add(sun, sun.target);
   const rimLight = new DirectionalLight(0x93b5d1, 0.55);
   rimLight.position.set(12, 10, -12);
@@ -533,7 +686,7 @@ export function createWorld(scene: Scene) {
     anchor.updateWorldMatrix(true, false);
     anchor.getWorldPosition(targetRing.position);
     targetRing.quaternion.copy(anchor.getWorldQuaternion(targetRing.quaternion));
-    targetRing.position.add(new Vector3(0, 0, action?.type === 'hail' ? 0.025 : 0.035).applyQuaternion(targetRing.quaternion));
+    targetRing.position.add(new Vector3(0, 0, anchor.userData.targetOffsetZ ?? 0.054).applyQuaternion(targetRing.quaternion));
     targetRing.scale.setScalar(action?.type === 'hail' ? 0.75 : 1);
   }
 
