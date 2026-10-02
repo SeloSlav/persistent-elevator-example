@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.spacetime-data/
+spacetimedb/dist/
+spacetimedb/node_modules/
+.env
+.env.local
+artifacts/
+*.log

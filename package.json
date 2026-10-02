@@ -1,0 +1,31 @@
+{
+  "name": "persistent-elevator-example",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A persistent two-player elevator: Vite, Three.js WebGPU, and server-authoritative SpacetimeDB.",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5174",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 4174",
+    "test": "tsx --test tests/*.test.ts",
+    "test:multiplayer": "tsx scripts/test-multiplayer.ts",
+    "db:start": "node scripts/spacetime.mjs start --listen-addr 127.0.0.1:3001 --data-dir .spacetime-data",
+    "db:publish": "node scripts/spacetime.mjs publish --server http://127.0.0.1:3001 --module-path spacetimedb --yes persistent-elevator-example",
+    "db:generate": "node scripts/spacetime.mjs generate --lang typescript --out-dir src/module_bindings --module-path spacetimedb --yes",
+    "db:build": "node scripts/spacetime.mjs build --module-path spacetimedb",
+    "db:check": "tsc --noEmit -p spacetimedb/tsconfig.json"
+  },
+  "dependencies": {
+    "spacetimedb": "2.10.2",
+    "three": "0.185.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.2",
+    "@types/three": "0.185.0",
+    "tsx": "4.20.6",
+    "typescript": "6.0.2",
+    "vite": "8.3.2"
+  },
+  "engines": { "node": ">=22.12.0" }
+}
