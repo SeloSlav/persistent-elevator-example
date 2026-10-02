@@ -160,4 +160,3 @@ export function stepFpFreeLookRecenter(
   }
   return true;
 }
-
